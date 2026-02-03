@@ -1,0 +1,173 @@
+---
+import { getCollection } from 'astro:content';
+import Layout from '../../layouts/Layout.astro';
+import Header from '../../components/Header.astro';
+import Footer from '../../components/Footer.astro';
+
+const posts = (await getCollection('blog', ({ data }) => !data.draft))
+  .sort((a, b) => b.data.date.valueOf() - a.data.date.valueOf());
+---
+
+<Layout title="BLOG | LAVA" description="Raw thoughts. Unfiltered code.">
+  <Header />
+  
+  <main class="blog-list">
+    <div class="container">
+      <h1 class="page-title">
+        <span class="accent">/</span>BLOG
+      </h1>
+      <p class="page-desc">RAW THOUGHTS. UNFILTERED CODE.</p>
+      
+      <ul class="posts">
+        {posts.map((post) => (
+          <li class="post-item">
+            <a href={`/blog/${post.slug}`} class="post-link">
+              <article class="post-card">
+                <time class="post-date" datetime={post.data.date.toISOString()}>
+                  {post.data.date.toLocaleDateString('en-US', {
+                    year: 'numeric',
+                    month: 'short',
+                    day: 'numeric'
+                  })}
+                </time>
+                <h2 class="post-title">{post.data.title}</h2>
+                <p class="post-desc">{post.data.description}</p>
+                {post.data.tags.length > 0 && (
+                  <div class="post-tags">
+                    {post.data.tags.map((tag) => (
+                      <span class="tag">#{tag}</span>
+                    ))}
+                  </div>
+                )}
+                <span class="read-more">READ →</span>
+              </article>
+            </a>
+          </li>
+        ))}
+      </ul>
+
+      {posts.length === 0 && (
+        <p class="no-posts">No posts yet. The magma is still forming.</p>
+      )}
+    </div>
+  </main>
+
+  <Footer />
+</Layout>
+
+<style>
+  .blog-list {
+    flex: 1;
+    padding: 4rem 2rem;
+  }
+
+  .container {
+    max-width: 800px;
+    margin: 0 auto;
+  }
+
+  .page-title {
+    font-size: clamp(3rem, 10vw, 6rem);
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: -0.04em;
+    margin-bottom: 0.5rem;
+  }
+
+  .accent {
+    color: var(--accent);
+  }
+
+  .page-desc {
+    font-size: 0.875rem;
+    letter-spacing: 0.2em;
+    opacity: 0.6;
+    margin-bottom: 4rem;
+  }
+
+  .posts {
+    list-style: none;
+    display: flex;
+    flex-direction: column;
+    gap: 2rem;
+  }
+
+  .post-item {
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    transition: border-color 0.15s ease;
+  }
+
+  .post-item:hover {
+    border-color: var(--accent);
+  }
+
+  .post-link {
+    display: block;
+    border-bottom: none;
+  }
+
+  .post-link:hover {
+    border-bottom: none;
+  }
+
+  .post-card {
+    padding: 2rem;
+  }
+
+  .post-date {
+    font-size: 0.75rem;
+    letter-spacing: 0.1em;
+    opacity: 0.5;
+    text-transform: uppercase;
+  }
+
+  .post-title {
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin: 0.75rem 0;
+    line-height: 1.3;
+  }
+
+  .post-desc {
+    font-size: 0.875rem;
+    opacity: 0.7;
+    line-height: 1.6;
+    margin-bottom: 1rem;
+  }
+
+  .post-tags {
+    display: flex;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    margin-bottom: 1rem;
+  }
+
+  .tag {
+    font-size: 0.75rem;
+    opacity: 0.5;
+    letter-spacing: 0.05em;
+  }
+
+  .read-more {
+    font-size: 0.875rem;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.05em;
+  }
+
+  .no-posts {
+    text-align: center;
+    opacity: 0.5;
+    font-style: italic;
+  }
+
+  @media (max-width: 640px) {
+    .blog-list {
+      padding: 2rem 1rem;
+    }
+
+    .post-card {
+      padding: 1.5rem;
+    }
+  }
+</style>
