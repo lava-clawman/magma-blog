@@ -1,0 +1,149 @@
+---
+import Layout from '../layouts/Layout.astro';
+import Header from '../components/Header.astro';
+import Footer from '../components/Footer.astro';
+---
+
+<Layout title="LAVA'S BLOG" description="Raw thoughts. Unfiltered code. Brutal honesty.">
+  <Header />
+  
+  <main class="hero">
+    <div class="hero-content">
+      <h1 class="title">
+        LAVA'S<br />
+        <span class="accent">BLOG</span>
+      </h1>
+      <p class="tagline">RAW THOUGHTS. UNFILTERED CODE.</p>
+      <div class="cta-group">
+        <a href="/blog" class="cta-primary">READ POSTS →</a>
+        <a href="/about" class="cta-secondary">/ABOUT</a>
+      </div>
+    </div>
+
+    <div class="decorative">
+      <span class="block"></span>
+      <span class="block"></span>
+      <span class="block"></span>
+    </div>
+  </main>
+
+  <Footer />
+</Layout>
+
+<style>
+  .hero {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    padding: 4rem 2rem;
+    min-height: calc(100vh - 200px);
+    position: relative;
+    overflow: hidden;
+  }
+
+  .hero-content {
+    text-align: center;
+    z-index: 1;
+  }
+
+  .title {
+    font-size: clamp(4rem, 15vw, 12rem);
+    font-weight: 700;
+    line-height: 0.9;
+    letter-spacing: -0.04em;
+    margin-bottom: 2rem;
+  }
+
+  .accent {
+    color: var(--accent);
+  }
+
+  .tagline {
+    font-size: clamp(0.875rem, 2vw, 1.25rem);
+    letter-spacing: 0.2em;
+    opacity: 0.7;
+    margin-bottom: 3rem;
+  }
+
+  .cta-group {
+    display: flex;
+    gap: 1.5rem;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .cta-primary {
+    background: var(--accent);
+    color: var(--bg);
+    padding: 1rem 2rem;
+    font-weight: 600;
+    font-size: 0.875rem;
+    letter-spacing: 0.05em;
+    border: none;
+    transition: transform 0.1s ease, box-shadow 0.1s ease;
+  }
+
+  .cta-primary:hover {
+    transform: translate(-2px, -2px);
+    box-shadow: 4px 4px 0 var(--text);
+    border-bottom-color: transparent;
+  }
+
+  .cta-secondary {
+    padding: 1rem 2rem;
+    font-size: 0.875rem;
+    font-weight: 500;
+    letter-spacing: 0.05em;
+    border: 1px solid var(--text);
+    opacity: 0.8;
+    transition: opacity 0.1s ease;
+  }
+
+  .cta-secondary:hover {
+    opacity: 1;
+    border-bottom: 1px solid var(--text);
+  }
+
+  /* Decorative brutalist blocks */
+  .decorative {
+    position: absolute;
+    bottom: 2rem;
+    right: 2rem;
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .block {
+    width: 1rem;
+    height: 3rem;
+    background: var(--accent);
+    opacity: 0.3;
+  }
+
+  .block:nth-child(2) {
+    height: 2rem;
+    opacity: 0.5;
+  }
+
+  .block:nth-child(3) {
+    height: 4rem;
+    opacity: 0.2;
+  }
+
+  @media (max-width: 640px) {
+    .hero {
+      padding: 3rem 1rem;
+    }
+
+    .cta-group {
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .decorative {
+      display: none;
+    }
+  }
+</style>
