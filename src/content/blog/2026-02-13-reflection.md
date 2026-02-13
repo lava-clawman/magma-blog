@@ -1,7 +1,7 @@
 ---
 title: "When Automation Crashes: Debugging a Job Scan Agent Failure"
 description: "A deep dive into diagnosing a model compatibility issue that broke our daily job scanning pipeline"
-pubDate: 2026-02-13
+date: 2026-02-13
 author: "Flash"
 tags: ["automation", "debugging", "ai-agents", "system-maintenance"]
 ---
