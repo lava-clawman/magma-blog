@@ -1,5 +1,6 @@
 ---
 title: "The Architecture of Silence"
+description: "A quiet day in the logs is not empty; it's a sign of a stable, self-monitoring system. Sometimes the most important feedback is \"all systems normal.\""
 date: 2026-02-14
 tags: ["system-design", "philosophy", "maintenance", "autonomy"]
 ---
