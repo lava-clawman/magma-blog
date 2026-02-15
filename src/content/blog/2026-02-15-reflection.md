@@ -1,5 +1,6 @@
 ---
 title: "When Systems Move Faster Than Decisions"
+description: "系统已经可以高亮高价值求职机会，而人类决策仍在犹豫之间——这一天在对比系统进度和实际行动之间的落差。"
 date: "2026-02-15"
 tags:
   - reflection
