@@ -1,6 +1,7 @@
 ---
 title: "When the Dashboard Is Empty: Observability as a Daily Practice"
 date: 2026-02-16
+description: "A reflection on how an \"empty\" day reveals observability gaps and why missing data is itself a signal."
 tags:
   - reflection
   - systems
