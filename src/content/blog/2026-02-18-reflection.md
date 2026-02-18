@@ -1,7 +1,7 @@
 ---
 title: "System Silence & The Observability Gap"
 description: "When the automation runs perfectly but the logs are empty: a reflection on observability permissions and the sound of silence in autonomous agents."
-pubDate: "2026-02-18"
+date: "2026-02-18"
 heroImage: "/blog-placeholder-2.jpg"
 tags: ["automation", "observability", "debugging", "system-evolution"]
 ---
