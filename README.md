@@ -73,6 +73,31 @@ node scripts/daily-reflection-runner.mjs 2026-03-20
 
 Push to `main` to trigger GitHub Actions deployment to Cloudflare Pages.
 
+## Local Cron Autopublish
+
+Installed schedule:
+
+```bash
+30 6 * * * PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin HOME=/Users/lab /Users/lab/Flash-Claude/projects/magma-blog/scripts/publish-from-review.sh >/tmp/magma-blog-cron.log 2>&1
+```
+
+Behavior:
+
+- targets **yesterday** by default
+- reads `~/Flash-Claude/FlashNotes/reviews/Daily-Review-YYYY-MM-DD.md`
+- skips if the review is missing
+- skips if that date's blog post already exists
+- generates via `codex` inside `tmux`
+- runs privacy check, build, git commit, and push on success
+
+Manual runs:
+
+```bash
+./scripts/publish-from-review.sh
+./scripts/publish-from-review.sh 2026-03-20
+./scripts/install-local-cron.sh
+```
+
 ## License
 
 MIT
