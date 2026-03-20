@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" role="img" aria-label="Lava touch icon">
+  <rect width="180" height="180" rx="28" fill="#0a0a0a"/>
+  <path d="M38 142L72 74L87 101L100 63L142 142H38Z" fill="#ededed"/>
+  <path d="M77 47C77 38 84 29 84 29C84 29 82 40 89 47C94 52 97 58 97 64C97 72 92 79 86 82C80 79 75 72 75 64C75 57 78 52 84 48C81 48 79 48 77 47Z" fill="#ff4500"/>
+  <path d="M60 142H104L91 117L82 128L72 107L60 142Z" fill="#ff4500"/>
+</svg>

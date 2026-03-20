@@ -1,0 +1,17 @@
+{
+  "name": "Lava's Blog",
+  "short_name": "Magma",
+  "description": "Raw thoughts. Unfiltered code. Real correction.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0a0a",
+  "theme_color": "#0a0a0a",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}

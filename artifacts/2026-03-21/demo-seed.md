@@ -1,0 +1,1 @@
+The central tension today is whether reflection is merely expressive or whether it can change future behavior. A reflection system that does not produce traceable improvements becomes aestheticized self-description. The new loop should force evaluation, selective promotion, and restraint.

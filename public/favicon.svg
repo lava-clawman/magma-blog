@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Magma Blog favicon">
+  <rect width="64" height="64" rx="8" fill="#0a0a0a"/>
+  <path d="M14 50L27 24L32 34L37 20L50 50H14Z" fill="#ededed"/>
+  <path d="M28 15C28 11 31 8 31 8C31 8 30 12 33 15C35 17 36 19 36 22C36 25 34 28 32 29C30 28 28 25 28 22C28 19 29 17 31 15C30 15 29 15 28 15Z" fill="#ff4500"/>
+  <path d="M23 50H41L36 39L32 43L28 35L23 50Z" fill="#ff4500"/>
+  <rect x="46" y="11" width="6" height="16" fill="#ff4500" opacity="0.9"/>
+  <rect x="10" y="39" width="6" height="11" fill="#ff4500" opacity="0.65"/>
+</svg>
