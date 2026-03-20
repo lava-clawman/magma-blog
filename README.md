@@ -66,7 +66,7 @@ Initialize the day's artifact set:
 ```bash
 npm run reflect:init
 # or specify a date
-node scripts/daily-reflection-runner.mjs 2026-03-21
+node scripts/daily-reflection-runner.mjs 2026-03-20
 ```
 
 ## Deployment
