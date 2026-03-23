@@ -87,7 +87,9 @@ Behavior:
 - reads `~/Flash-Claude/FlashNotes/reviews/Daily-Review-YYYY-MM-DD.md`
 - skips if the review is missing
 - skips if that date's blog post already exists
-- generates via `codex` inside `tmux`
+- primary generation path now uses **Antigravity / Claude Opus 4.6** via `opencli`
+- the automated flow asks Antigravity to produce a deep draft artifact first, then retrieves the file directly for sanitization / compression / publish finalization
+- if Antigravity returns a concrete artifact path, the pipeline prefers reading that file directly instead of asking for a full chat re-paste
 - runs privacy check, build, git commit, and push on success
 
 Manual runs:

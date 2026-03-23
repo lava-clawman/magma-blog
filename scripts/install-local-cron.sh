@@ -15,3 +15,4 @@ rm -f "$TMP"
 
 echo "Installed cron lines:"
 crontab -l | grep 'magma-blog/scripts/'
+echo "Generator path: Antigravity / Claude Opus 4.6 via opencli"

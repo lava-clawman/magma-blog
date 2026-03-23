@@ -7,6 +7,10 @@ REPO="$HOME/Flash-Claude/projects/magma-blog"
 REVIEWS_DIR="$HOME/Flash-Claude/FlashNotes/reviews"
 LOG_DIR="$REPO/logs"
 LOCK_DIR="$REPO/.locks"
+OPENCLI_BIN="/opt/homebrew/bin/opencli"
+ANTIGRAVITY_APP="/Applications/Antigravity.app/Contents/MacOS/Electron"
+OPENCLI_CDP_ENDPOINT="http://127.0.0.1:9224"
+export OPENCLI_CDP_ENDPOINT
 mkdir -p "$LOG_DIR" "$LOCK_DIR"
 
 DATE="${1:-$(date -v-1d +%F)}"
@@ -19,6 +23,8 @@ LOCK_FILE="$LOCK_DIR/publish-${DATE}.lock"
 FAIL_FLAG="$ARTIFACT_DIR/.failure-notified"
 SUCCESS_FLAG="$ARTIFACT_DIR/.success-notified"
 CHANNEL_TARGET="channel:1484517576985022545"
+MODEL_LABEL="Claude Opus 4.6 (Thinking)"
+ARTIFACT_NAME="reflection_post.md"
 
 notify() {
   local text="$1"
@@ -60,38 +66,43 @@ if git ls-files --error-unmatch "$BLOG_FILE" >/dev/null 2>&1; then
   exit 0
 fi
 if [ -f "$BLOG_FILE" ]; then
-  echo "blog file already exists locally for $DATE, skipping"
-  exit 0
+  echo "removing stale local blog file for retry: $BLOG_FILE"
+  rm -f "$BLOG_FILE"
 fi
 
 mkdir -p "$ARTIFACT_DIR"
+SANITIZED_REVIEW="$ARTIFACT_DIR/source-review.sanitized.md"
 cp "$REVIEW_FILE" "$ARTIFACT_DIR/source-review.md"
+python3 - "$REVIEW_FILE" "$SANITIZED_REVIEW" <<'PY'
+from pathlib import Path
+import re, sys
+src = Path(sys.argv[1]).read_text()
+src = re.sub(r'\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b', '[redacted-email]', src, flags=re.I)
+src = re.sub(r'\b[a-z0-9_.-]{2,32}#[0-9]{4}\b', '[redacted-handle]', src, flags=re.I)
+Path(sys.argv[2]).write_text(src)
+PY
 
-PROMPT_FILE="$ARTIFACT_DIR/codex-prompt.txt"
-RAW_OUT="$ARTIFACT_DIR/codex-output.raw.md"
-OUT_FILE="$ARTIFACT_DIR/codex-output.md"
-rm -f "$RAW_OUT" "$OUT_FILE"
+PROMPT_FILE="$ARTIFACT_DIR/antigravity-prompt.txt"
+READ_JSON="$ARTIFACT_DIR/antigravity-read.json"
+OUT_FILE="$ARTIFACT_DIR/antigravity-output.md"
+RAW_HINTS="$ARTIFACT_DIR/antigravity-hints.txt"
+rm -f "$READ_JSON" "$OUT_FILE" "$RAW_HINTS"
 
 cat > "$PROMPT_FILE" <<EOF
-You are writing a public reflection blog post from a private daily review.
+Write a PUBLIC reflection blog post from the daily review below.
 
-Task:
-- Read the Daily Review content below.
-- Write ONE public-facing markdown blog post.
-- Output ONLY the final markdown file content.
-- Do not include explanations, notes, fences, or commentary.
-
-Hard rules:
-- Remove all personal names, email addresses, account names, handles, and identifiers.
-- Do not expose interview dates, exact times, private correspondence details, or account states.
-- Abstract private specifics into system, workflow, judgment, communication, or tooling lessons.
-- Keep the writing honest, sharp, and specific without leaking private data.
+Requirements:
 - Use first-person voice.
-- Prefer 500-900 words.
-- Tags should be concise and accurate.
-- The title should fit the existing Magma Blog tone.
+- 500-900 words.
+- Remove private identifiers, handles, email addresses, and overly specific personal traces.
+- Focus on durable workflow / judgment / system / engineering lessons.
+- End with an unresolved tension, not a neat conclusion.
+- Save the final markdown to a file named ${ARTIFACT_NAME}.
+- Then reply in chat with exactly one line in this format:
+ARTIFACT_PATH: <absolute path to ${ARTIFACT_NAME}>
+- Do not paste the article body into chat.
 
-Required output format:
+Exact markdown file format:
 ---
 title: "..."
 date: ${DATE}
@@ -101,57 +112,92 @@ tags: ["reflection", "..."]
 
 [body]
 
-The post must end with a short unresolved section or closing tension, not a fake neat resolution.
-
 Daily Review source:
-
 EOF
-cat "$REVIEW_FILE" >> "$PROMPT_FILE"
+cat "$SANITIZED_REVIEW" >> "$PROMPT_FILE"
 
-SESSION="magma-publish-${DATE}"
-if tmux has-session -t "$SESSION" 2>/dev/null; then
-  tmux kill-session -t "$SESSION" || true
-fi
+ensure_antigravity() {
+  if curl -fsS "$OPENCLI_CDP_ENDPOINT/json/version" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ ! -x "$ANTIGRAVITY_APP" ]; then
+    fail_and_notify "Antigravity app not found at $ANTIGRAVITY_APP"
+  fi
+  echo "starting Antigravity CDP instance"
+  "$ANTIGRAVITY_APP" --remote-debugging-port=9224 >/tmp/antigravity-opencli.log 2>&1 &
+  sleep 4
+  curl -fsS "$OPENCLI_CDP_ENDPOINT/json/version" >/dev/null 2>&1 || fail_and_notify "Antigravity CDP endpoint unavailable"
+}
 
-echo "starting codex session: $SESSION"
-tmux new-session -d -s "$SESSION" "cd '$REPO' && codex exec --model gpt-5.3-codex --full-auto < '$PROMPT_FILE' > '$RAW_OUT' 2>&1"
+ensure_antigravity
 
-for _ in $(seq 1 180); do
-  if ! tmux has-session -t "$SESSION" 2>/dev/null; then
+$OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity status failed"
+$OPENCLI_BIN antigravity new -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity new failed"
+$OPENCLI_BIN antigravity model "$MODEL_LABEL" -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity model switch failed"
+$OPENCLI_BIN antigravity send "$(cat "$PROMPT_FILE")" -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity send failed"
+
+START_EPOCH="$(date +%s)"
+ABSOLUTE_ARTIFACT_PATH=""
+for _ in $(seq 1 30); do
+  sleep 15
+  if ! $OPENCLI_BIN antigravity read -f json > "$READ_JSON" 2>/dev/null; then
+    continue
+  fi
+  python3 - "$READ_JSON" "$RAW_HINTS" <<'PY'
+import json, re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+out = Path(sys.argv[2])
+try:
+    data = json.loads(p.read_text())
+except Exception:
+    sys.exit(1)
+text = "\n".join(item.get("content", "") for item in data if isinstance(item, dict))
+out.write_text(text)
+m = re.search(r'ARTIFACT_PATH:\s*(\S+reflection_post\.md)', text)
+if not m:
+    sys.exit(2)
+print(m.group(1))
+PY
+  status=$?
+  if [ $status -eq 0 ]; then
+    ABSOLUTE_ARTIFACT_PATH="$(python3 - "$READ_JSON" <<'PY'
+import json, re, sys
+text = "\n".join(item.get("content", "") for item in json.loads(open(sys.argv[1]).read()) if isinstance(item, dict))
+m = re.search(r'ARTIFACT_PATH:\s*(\S+reflection_post\.md)', text)
+print(m.group(1) if m else "")
+PY
+)"
     break
   fi
-  sleep 10
+  CANDIDATE="$(find "$HOME/.gemini/antigravity/brain" -name "$ARTIFACT_NAME" -type f -newermt "@$START_EPOCH" 2>/dev/null | head -1 || true)"
+  if [ -n "$CANDIDATE" ] && [ -s "$CANDIDATE" ]; then
+    ABSOLUTE_ARTIFACT_PATH="$CANDIDATE"
+    break
+  fi
 done
 
-if tmux has-session -t "$SESSION" 2>/dev/null; then
-  tmux kill-session -t "$SESSION" || true
-  fail_and_notify "codex timeout"
+if [ -z "$ABSOLUTE_ARTIFACT_PATH" ]; then
+  CANDIDATE="$(find "$HOME/.gemini/antigravity/brain" -name "$ARTIFACT_NAME" -type f -newermt "@$START_EPOCH" 2>/dev/null | head -1 || true)"
+  if [ -n "$CANDIDATE" ] && [ -s "$CANDIDATE" ]; then
+    ABSOLUTE_ARTIFACT_PATH="$CANDIDATE"
+  fi
 fi
 
-if [ ! -s "$RAW_OUT" ]; then
-  fail_and_notify "codex raw output missing"
+if [ -z "$ABSOLUTE_ARTIFACT_PATH" ]; then
+  fail_and_notify "antigravity artifact path not found"
+fi
+if [ ! -s "$ABSOLUTE_ARTIFACT_PATH" ]; then
+  fail_and_notify "antigravity artifact missing or empty"
 fi
 
-python3 - "$RAW_OUT" "$OUT_FILE" <<'PY'
-from pathlib import Path
-import re, sys
-raw = Path(sys.argv[1]).read_text()
-out = Path(sys.argv[2])
-pattern = re.compile(r'(?ms)^---\ntitle:.*?(?:\n---\n.*)$')
-matches = pattern.findall(raw)
-if not matches:
-    sys.exit(1)
-out.write_text(matches[-1].strip() + "\n")
-PY
-if [ $? -ne 0 ] || [ ! -s "$OUT_FILE" ]; then
-  fail_and_notify "no valid markdown document extracted from codex output"
-fi
+echo "artifact path: $ABSOLUTE_ARTIFACT_PATH"
+cp "$ABSOLUTE_ARTIFACT_PATH" "$OUT_FILE"
+cp "$OUT_FILE" "$BLOG_FILE"
 
 if ! grep -q '^title:' "$OUT_FILE" || ! grep -q '^date: ' "$OUT_FILE" || ! grep -q '^description:' "$OUT_FILE" || ! grep -q '^tags:' "$OUT_FILE"; then
   fail_and_notify "frontmatter validation failed"
 fi
-
-cp "$OUT_FILE" "$BLOG_FILE"
 
 echo "running privacy check"
 if ! node scripts/privacy-check.mjs "$BLOG_FILE"; then
@@ -166,24 +212,30 @@ cat > "$IMPROVEMENT_FILE" <<EOF
 PARTIAL
 
 ## Promoted Insights
-- TOOLS.md: Use browser-backed capture and explicit partial labeling when dynamic social fetch paths are unreliable.
-- TOOLS.md: Memory flush workflows need post-flush delta checks to avoid silent omissions.
+- TOOLS.md: When Antigravity exposes a concrete artifact path, prefer file-first retrieval over asking for a chat paste.
+- TOOLS.md: Reflection publishing benefits from a two-stage flow: deep draft first, then sanitization / compression / publish finalization.
 
 ## Rationale
-This automated path promotes only durable operational and knowledge-management lessons with reuse value across days.
+These are durable workflow improvements beyond a single review day.
 
 ## Trace
 - Source: $REVIEW_FILE
-- Generation: codex exec via tmux-backed cron run
+- Generation: opencli antigravity via ${MODEL_LABEL}
+- Artifact: $ABSOLUTE_ARTIFACT_PATH
 EOF
 
 echo "building"
 npm run build || fail_and_notify "build failed"
 
 echo "git sync"
+git add scripts/publish-from-review.sh scripts/retry-missing-reflections.sh README.md >/dev/null 2>&1 || true
+if ! git diff --cached --quiet; then
+  git commit -m "chore: update antigravity-first reflection pipeline" || fail_and_notify "git commit preflight pipeline changes failed"
+fi
+
 git pull --rebase origin main || fail_and_notify "git pull --rebase failed"
 
-git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$OUT_FILE" "$RAW_OUT"
+git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$SANITIZED_REVIEW" "$OUT_FILE" "$READ_JSON" "$RAW_HINTS"
 if git diff --cached --quiet; then
   echo "no staged diff after generation"
   exit 0
