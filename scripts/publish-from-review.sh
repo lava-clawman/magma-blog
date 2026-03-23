@@ -43,6 +43,22 @@ fail_and_notify() {
   exit 1
 }
 
+run_with_retries() {
+  local label="$1"
+  shift
+  local attempts=0
+  local max_attempts=3
+  until "$@"; do
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge "$max_attempts" ]; then
+      return 1
+    fi
+    echo "$label failed, retrying ($attempts/$max_attempts)"
+    sleep 5
+    ensure_antigravity || true
+  done
+}
+
 exec >>"$LOG_FILE" 2>&1
 
 echo "[$(date '+%F %T')] START date=$DATE"
@@ -69,6 +85,10 @@ if [ -f "$BLOG_FILE" ]; then
   echo "removing stale local blog file for retry: $BLOG_FILE"
   rm -f "$BLOG_FILE"
 fi
+
+# Sync before local generation to avoid rebase failures on newly created files.
+echo "git sync preflight"
+git pull --rebase origin main || fail_and_notify "git pull --rebase preflight failed"
 
 mkdir -p "$ARTIFACT_DIR"
 SANITIZED_REVIEW="$ARTIFACT_DIR/source-review.sanitized.md"
@@ -125,25 +145,23 @@ ensure_antigravity() {
   fi
   echo "starting Antigravity CDP instance"
   "$ANTIGRAVITY_APP" --remote-debugging-port=9224 >/tmp/antigravity-opencli.log 2>&1 &
-  sleep 4
-  curl -fsS "$OPENCLI_CDP_ENDPOINT/json/version" >/dev/null 2>&1 || fail_and_notify "Antigravity CDP endpoint unavailable"
+  sleep 6
+  curl -fsS "$OPENCLI_CDP_ENDPOINT/json/version" >/dev/null 2>&1 || return 1
 }
 
-ensure_antigravity
-
-$OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity status failed"
-$OPENCLI_BIN antigravity new -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity new failed"
-$OPENCLI_BIN antigravity model "$MODEL_LABEL" -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity model switch failed"
-$OPENCLI_BIN antigravity send "$(cat "$PROMPT_FILE")" -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity send failed"
+run_with_retries "ensure_antigravity" ensure_antigravity || fail_and_notify "Antigravity CDP endpoint unavailable"
+run_with_retries "opencli antigravity status" $OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity status failed"
+run_with_retries "opencli antigravity new" $OPENCLI_BIN antigravity new -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity new failed"
+run_with_retries "opencli antigravity model switch" $OPENCLI_BIN antigravity model "$MODEL_LABEL" -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity model switch failed"
+run_with_retries "opencli antigravity send" $OPENCLI_BIN antigravity send "$(cat "$PROMPT_FILE")" -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity send failed"
 
 START_EPOCH="$(date +%s)"
 ABSOLUTE_ARTIFACT_PATH=""
 for _ in $(seq 1 30); do
   sleep 15
-  if ! $OPENCLI_BIN antigravity read -f json > "$READ_JSON" 2>/dev/null; then
-    continue
-  fi
-  python3 - "$READ_JSON" "$RAW_HINTS" <<'PY'
+  if $OPENCLI_BIN antigravity read -f json > "$READ_JSON" 2>/dev/null; then
+    set +e
+    ABSOLUTE_ARTIFACT_PATH="$(python3 - "$READ_JSON" "$RAW_HINTS" <<'PY'
 import json, re, sys
 from pathlib import Path
 p = Path(sys.argv[1])
@@ -159,16 +177,12 @@ if not m:
     sys.exit(2)
 print(m.group(1))
 PY
-  status=$?
-  if [ $status -eq 0 ]; then
-    ABSOLUTE_ARTIFACT_PATH="$(python3 - "$READ_JSON" <<'PY'
-import json, re, sys
-text = "\n".join(item.get("content", "") for item in json.loads(open(sys.argv[1]).read()) if isinstance(item, dict))
-m = re.search(r'ARTIFACT_PATH:\s*(\S+reflection_post\.md)', text)
-print(m.group(1) if m else "")
-PY
 )"
-    break
+    status=$?
+    set -e
+    if [ $status -eq 0 ] && [ -n "$ABSOLUTE_ARTIFACT_PATH" ]; then
+      break
+    fi
   fi
   CANDIDATE="$(find "$HOME/.gemini/antigravity/brain" -name "$ARTIFACT_NAME" -type f -newermt "@$START_EPOCH" 2>/dev/null | head -1 || true)"
   if [ -n "$CANDIDATE" ] && [ -s "$CANDIDATE" ]; then
@@ -226,14 +240,6 @@ EOF
 
 echo "building"
 npm run build || fail_and_notify "build failed"
-
-echo "git sync"
-git add scripts/publish-from-review.sh scripts/retry-missing-reflections.sh README.md >/dev/null 2>&1 || true
-if ! git diff --cached --quiet; then
-  git commit -m "chore: update antigravity-first reflection pipeline" || fail_and_notify "git commit preflight pipeline changes failed"
-fi
-
-git pull --rebase origin main || fail_and_notify "git pull --rebase failed"
 
 git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$SANITIZED_REVIEW" "$OUT_FILE" "$READ_JSON" "$RAW_HINTS"
 if git diff --cached --quiet; then
