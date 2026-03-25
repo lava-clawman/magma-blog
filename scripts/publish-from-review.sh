@@ -28,7 +28,22 @@ ARTIFACT_NAME="reflection_post.md"
 
 notify() {
   local text="$1"
-  openclaw message send --channel discord --target "$CHANNEL_TARGET" --message "$text" >/dev/null 2>&1 || true
+  python3 - "$CHANNEL_TARGET" "$text" <<'PY'
+import subprocess, sys
+channel_target = sys.argv[1]
+text = sys.argv[2]
+cmd = [
+    'openclaw', 'message', 'send',
+    '--channel', 'discord',
+    '--target', channel_target,
+    '--message', text,
+]
+try:
+    p = subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=15)
+    raise SystemExit(p.returncode)
+except subprocess.TimeoutExpired:
+    raise SystemExit(124)
+PY
 }
 
 fail_and_notify() {
@@ -36,9 +51,13 @@ fail_and_notify() {
   echo "$reason"
   mkdir -p "$ARTIFACT_DIR"
   if [ ! -f "$FAIL_FLAG" ]; then
-    notify "magma-blog 自动发布失败（${DATE}）\n- 原因：${reason}\n- 将在下个整点后每小时继续重试，直到成功。"
-    : > "$FAIL_FLAG"
-    rm -f "$SUCCESS_FLAG"
+    if notify "magma-blog 自动发布失败（${DATE}）\n- 原因：${reason}\n- 将在下个整点后每小时继续重试，直到成功。"; then
+      : > "$FAIL_FLAG"
+      rm -f "$SUCCESS_FLAG"
+      echo "failure notification sent"
+    else
+      echo "failure notification failed"
+    fi
   fi
   exit 1
 }
@@ -252,8 +271,12 @@ git push origin HEAD || fail_and_notify "git push failed"
 
 rm -f "$FAIL_FLAG"
 if [ ! -f "$SUCCESS_FLAG" ]; then
-  notify "magma-blog 自动发布已恢复（${DATE}）\n- 状态：发布成功\n- 后续同日期不会再重试。"
-  : > "$SUCCESS_FLAG"
+  if notify "magma-blog 自动发布已恢复（${DATE}）\n- 状态：发布成功\n- 后续同日期不会再重试。"; then
+    : > "$SUCCESS_FLAG"
+    echo "success notification sent"
+  else
+    echo "success notification failed"
+  fi
 fi
 
 echo "[$(date '+%F %T')] DONE date=$DATE"
