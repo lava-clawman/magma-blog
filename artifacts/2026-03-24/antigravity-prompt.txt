@@ -1,0 +1,80 @@
+Write a PUBLIC reflection blog post from the daily review below.
+
+Requirements:
+- Use first-person voice.
+- 500-900 words.
+- Remove private identifiers, handles, email addresses, and overly specific personal traces.
+- Focus on durable workflow / judgment / system / engineering lessons.
+- End with an unresolved tension, not a neat conclusion.
+- Save the final markdown to a file named reflection_post.md.
+- Then reply in chat with exactly one line in this format:
+ARTIFACT_PATH: <absolute path to reflection_post.md>
+- Do not paste the article body into chat.
+
+Exact markdown file format:
+---
+title: "..."
+date: 2026-03-24
+description: "..."
+tags: ["reflection", "..."]
+---
+
+[body]
+
+Daily Review source:
+# Daily Review 2026-03-24
+
+- Related: [[Second Brain Operating System]], [[Second-Brain-Integration-Plan-v1]], [[Task Management]], [[FlashNotes]]
+
+## 今日关键事项
+- 完成了 [[magma-blog]] 自动发布链的实质切换：从旧的 Codex 路径改为 **Antigravity / Claude Opus 4.6 起草优先**，并验证 `2026-03-23` 文章已成功生成、通过隐私检查、build、commit、push。
+- 修复并收口了 [[magma-blog]] 发布流水线中的多处阻塞：脚本尾部损坏、`git pull --rebase` 顺序错误、`opencli/Antigravity` 瞬时不稳定、artifact 读取方式不合理。
+- 明确了 [[Antigravity]] 的正确接入原则：**artifact-first / file-first**。只要返回真实产物路径，就直接读文件，不再要求模型把正文贴回聊天。
+- 清理了 [[magma-blog]] 历史 codex 残留、测试稿和脏工作区，确认当前 repo 为 clean，并保留主 cron（06:30）与重试 cron（每小时 :35）。
+- 梳理了 [[OpenClaw]] hook / automation 能力边界：命令事件、消息事件、session/compaction、tool hooks、background exec 退出通知、heartbeat/cron 的职责分工。
+- 针对“长任务/子代理说会通知但没通知”的问题，形成了更清晰的工作流判断：监控类靠 [[heartbeat]] / [[cron]] 持续观察，完成通知类靠真实可追踪对象和退出/完成事件，不应只靠口头承诺。
+- 为新建的 [[project-orchestrator]] agent 补上了 Shaun 的中文表达偏好，明确禁止黑话、俚语、短视频腔、营销腔等表达，减少“刀一下/砍一刀”等烦人用语漂移。
+
+## 决策与变更
+- 决定把 [[magma-blog]] 的“实际自动链”而不是仅文档说明，真正切换到 **Antigravity-first**：
+  - 自动确保 CDP 实例可用
+  - 切到 `Claude Opus 4.6 (Thinking)`
+  - 让 Antigravity 生成 `reflection_post.md`
+  - 从真实 artifact 路径直接读取产物
+  - 再执行 privacy check、build、git push
+- 决定将 **artifact-first / file-first** 作为 [[Antigravity]] 的长期规则，并已同步到共享 baseline / 流程说明：Antigravity 更适合作为 deep-draft engine，后续再由主链做压缩、脱敏、定稿与发布。
+- 修正 [[magma-blog]] 发布脚本顺序：先做 `git sync preflight`，再生成本地文件，避免因为工作区已变更导致 `git pull --rebase` 被阻塞。
+- 为 [[Antigravity]] / `opencli` 接入增加重试与恢复逻辑，覆盖 `status`、`new`、`model`、`send` 等关键点，降低瞬时失败导致的断链概率。
+- 明确了“监控/巡检类”和“长任务完成通知类”是两套不同机制：
+  - 监控：[[cron]] / [[heartbeat]] 负责“去看”，hook/消息逻辑负责“怎么报”
+  - 执行：必须落成 background exec / subagent / tmux / task object 这类可追踪对象，不能只说“改完通知你”
+- 对 [[project-orchestrator]] 的设定进行补充：将 Shaun 的语言风格偏好写入其 `USER.md`，作为该 agent 的直接协作约束。
+
+## 错误与改进
+- [[magma-blog]] 旧链早晨连续失败，暴露出多个问题：
+  - codex raw output missing
+  - 隐私检查曾泄露邮箱，导致 privacy check fail
+  - 脚本一度出现 `SANITIZED_REVIEW: unbound variable`
+  - 先生成再 pull 导致 `git pull --rebase` 因 unstaged changes 失败
+- 对这些问题的改进已落地：
+  - 预脱敏 review 源文件
+  - 修复脚本变量与尾部损坏
+  - 将 pull 前置为 preflight
+  - 增加 Antigravity / opencli 重试与受控重启路径
+  - 成功用真实 artifact 路径完成一次端到端发布验证
+- 发现 [[Antigravity]] 故障模式并非单一“app 没起”，而是可能出现 **CDP 端口活着，但 opencli 会话层卡住/未就绪**。当天已通过受控重启 + 延时复测恢复。
+- build 中出现过 `Duplicate id "2026-03-23-reflection"` 警告，未阻塞成功发布，但提示同日期内容源曾在某阶段被重复感知，后续应继续留意目录残留或重复输入源。
+- 对 [[OpenClaw]] hooks 的理解更具体了：hook 很适合补通知链路，但不能替代真实的状态检测与任务对象。要减少“说会通知但没通知”，关键不是文案，而是完成态触发器与可恢复状态。
+- 对多 subagent 行为的判断也更清楚：subagent 可以并行运行，但主 agent 消费回传结果仍是串行；若长任务缺少超时、异步化、checkpoint、退出通知，则可能出现“子流程失联”。
+
+## 未完成事项（待提醒）
+- 观察明天早上 [[magma-blog]] 自然 cron 是否在**无人干预**下顺利发布，以确认 Antigravity-first 流水线已经稳定站住。
+- 继续检查 [[magma-blog]] build 中的 duplicate-id 警告来源，避免后续演变成稳定性或内容路由问题。
+- 为 [[project-orchestrator]] 再补一层 `AGENTS.md` 级别的语言硬约束会更稳；目前已写入 `USER.md`，但尚未加到 agent 工作纪律层。
+- 若要系统性解决“说会通知但没通知”，仍需把“长任务必须落成可追踪对象、必须有超时/阶段回报/完成通知”的规则沉淀进相关 agent 规范或自动化链路。
+- 可进一步把“任务完成自动回报”与“Paperclip/系统巡检告警”落成实际 hook / cron / heartbeat 方案，而不只是原则讨论。
+
+## 明日优先级 Top 3
+1. 验证 [[magma-blog]] 明早自然 cron 是否能自动完成发布，并检查失败通知/重试链是否按预期工作。
+2. 继续收紧 [[project-orchestrator]] 的输出纪律：把禁止黑话俚语的约束补到 `AGENTS.md`，避免风格漂移反复出现。
+3. 选择一条高价值通知链路落地（长任务完成自动回报或 [[Paperclip]] 巡检告警），把“会通知”变成真实机制。
