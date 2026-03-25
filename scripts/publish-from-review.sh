@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+PATH=/Users/lab/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 HOME=/Users/lab
 REPO="$HOME/Flash-Claude/projects/magma-blog"
 REVIEWS_DIR="$HOME/Flash-Claude/FlashNotes/reviews"
 LOG_DIR="$REPO/logs"
 LOCK_DIR="$REPO/.locks"
 OPENCLI_BIN="/opt/homebrew/bin/opencli"
+OPENCLAW_BIN="/Users/lab/.local/bin/openclaw"
 ANTIGRAVITY_APP="/Applications/Antigravity.app/Contents/MacOS/Electron"
 OPENCLI_CDP_ENDPOINT="http://127.0.0.1:9224"
 export OPENCLI_CDP_ENDPOINT
@@ -28,12 +29,11 @@ ARTIFACT_NAME="reflection_post.md"
 
 notify() {
   local text="$1"
-  python3 - "$CHANNEL_TARGET" "$text" <<'PY'
+  python3 - "$OPENCLAW_BIN" "$CHANNEL_TARGET" "$text" <<'PY'
 import subprocess, sys
-channel_target = sys.argv[1]
-text = sys.argv[2]
+openclaw_bin, channel_target, text = sys.argv[1:4]
 cmd = [
-    'openclaw', 'message', 'send',
+    openclaw_bin, 'message', 'send',
     '--channel', 'discord',
     '--target', channel_target,
     '--message', text,
@@ -62,7 +62,29 @@ fail_and_notify() {
   exit 1
 }
 
-run_with_retries() {
+restart_antigravity() {
+  echo "restarting controlled Antigravity instance"
+  pkill -f "$ANTIGRAVITY_APP --remote-debugging-port=9224" || true
+  pkill -f "$ANTIGRAVITY_APP" || true
+  sleep 3
+  "$ANTIGRAVITY_APP" --remote-debugging-port=9224 >/tmp/antigravity-opencli.log 2>&1 &
+  sleep 8
+}
+
+ensure_antigravity() {
+  if curl -fsS "$OPENCLI_CDP_ENDPOINT/json/version" >/dev/null 2>&1; then
+    return 0
+  fi
+  if [ ! -x "$ANTIGRAVITY_APP" ]; then
+    fail_and_notify "Antigravity app not found at $ANTIGRAVITY_APP"
+  fi
+  echo "starting Antigravity CDP instance"
+  "$ANTIGRAVITY_APP" --remote-debugging-port=9224 >/tmp/antigravity-opencli.log 2>&1 &
+  sleep 8
+  curl -fsS "$OPENCLI_CDP_ENDPOINT/json/version" >/dev/null 2>&1 || return 1
+}
+
+run_opencli_step() {
   local label="$1"
   shift
   local attempts=0
@@ -72,8 +94,8 @@ run_with_retries() {
     if [ "$attempts" -ge "$max_attempts" ]; then
       return 1
     fi
-    echo "$label failed, retrying ($attempts/$max_attempts)"
-    sleep 5
+    echo "$label failed, restarting Antigravity and retrying ($attempts/$max_attempts)"
+    restart_antigravity || true
     ensure_antigravity || true
   done
 }
@@ -105,7 +127,6 @@ if [ -f "$BLOG_FILE" ]; then
   rm -f "$BLOG_FILE"
 fi
 
-# Sync before local generation to avoid rebase failures on newly created files.
 echo "git sync preflight"
 git pull --rebase origin main || fail_and_notify "git pull --rebase preflight failed"
 
@@ -155,24 +176,11 @@ Daily Review source:
 EOF
 cat "$SANITIZED_REVIEW" >> "$PROMPT_FILE"
 
-ensure_antigravity() {
-  if curl -fsS "$OPENCLI_CDP_ENDPOINT/json/version" >/dev/null 2>&1; then
-    return 0
-  fi
-  if [ ! -x "$ANTIGRAVITY_APP" ]; then
-    fail_and_notify "Antigravity app not found at $ANTIGRAVITY_APP"
-  fi
-  echo "starting Antigravity CDP instance"
-  "$ANTIGRAVITY_APP" --remote-debugging-port=9224 >/tmp/antigravity-opencli.log 2>&1 &
-  sleep 6
-  curl -fsS "$OPENCLI_CDP_ENDPOINT/json/version" >/dev/null 2>&1 || return 1
-}
-
-run_with_retries "ensure_antigravity" ensure_antigravity || fail_and_notify "Antigravity CDP endpoint unavailable"
-run_with_retries "opencli antigravity status" $OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity status failed"
-run_with_retries "opencli antigravity new" $OPENCLI_BIN antigravity new -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity new failed"
-run_with_retries "opencli antigravity model switch" $OPENCLI_BIN antigravity model "$MODEL_LABEL" -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity model switch failed"
-run_with_retries "opencli antigravity send" $OPENCLI_BIN antigravity send "$(cat "$PROMPT_FILE")" -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity send failed"
+ensure_antigravity || fail_and_notify "Antigravity CDP endpoint unavailable"
+run_opencli_step "opencli antigravity status" $OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity status failed"
+run_opencli_step "opencli antigravity new" $OPENCLI_BIN antigravity new -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity new failed"
+run_opencli_step "opencli antigravity model switch" $OPENCLI_BIN antigravity model "$MODEL_LABEL" -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity model switch failed"
+run_opencli_step "opencli antigravity send" $OPENCLI_BIN antigravity send "$(cat "$PROMPT_FILE")" -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity send failed"
 
 START_EPOCH="$(date +%s)"
 ABSOLUTE_ARTIFACT_PATH=""
