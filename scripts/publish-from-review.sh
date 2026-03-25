@@ -100,6 +100,43 @@ run_opencli_step() {
   done
 }
 
+current_model_is_target() {
+  local model_read
+  if ! model_read="$($OPENCLI_BIN antigravity read -f json 2>/dev/null || true)"; then
+    return 1
+  fi
+  echo "$model_read" | grep -Fq "$MODEL_LABEL"
+}
+
+switch_model_if_needed() {
+  if current_model_is_target; then
+    echo "model already on target: $MODEL_LABEL"
+    return 0
+  fi
+
+  sleep 3
+  if current_model_is_target; then
+    echo "model already on target after settle: $MODEL_LABEL"
+    return 0
+  fi
+
+  if run_opencli_step "opencli antigravity model switch" $OPENCLI_BIN antigravity model "$MODEL_LABEL" -f json >/dev/null 2>&1; then
+    sleep 3
+    if current_model_is_target; then
+      echo "model switch confirmed: $MODEL_LABEL"
+      return 0
+    fi
+  fi
+
+  # One more read-based confirmation before failing hard.
+  if current_model_is_target; then
+    echo "model appears to be target despite switch instability: $MODEL_LABEL"
+    return 0
+  fi
+
+  return 1
+}
+
 exec >>"$LOG_FILE" 2>&1
 
 echo "[$(date '+%F %T')] START date=$DATE"
@@ -179,7 +216,7 @@ cat "$SANITIZED_REVIEW" >> "$PROMPT_FILE"
 ensure_antigravity || fail_and_notify "Antigravity CDP endpoint unavailable"
 run_opencli_step "opencli antigravity status" $OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity status failed"
 run_opencli_step "opencli antigravity new" $OPENCLI_BIN antigravity new -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity new failed"
-run_opencli_step "opencli antigravity model switch" $OPENCLI_BIN antigravity model "$MODEL_LABEL" -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity model switch failed"
+switch_model_if_needed || fail_and_notify "opencli antigravity model switch failed"
 run_opencli_step "opencli antigravity send" $OPENCLI_BIN antigravity send "$(cat "$PROMPT_FILE")" -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity send failed"
 
 START_EPOCH="$(date +%s)"
