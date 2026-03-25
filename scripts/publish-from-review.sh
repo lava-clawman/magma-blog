@@ -9,6 +9,7 @@ LOG_DIR="$REPO/logs"
 LOCK_DIR="$REPO/.locks"
 OPENCLI_BIN="/opt/homebrew/bin/opencli"
 OPENCLAW_BIN="/Users/lab/.local/bin/openclaw"
+CODEX_BIN="/opt/homebrew/bin/codex"
 ANTIGRAVITY_APP="/Applications/Antigravity.app/Contents/MacOS/Electron"
 OPENCLI_CDP_ENDPOINT="http://127.0.0.1:9224"
 export OPENCLI_CDP_ENDPOINT
@@ -76,7 +77,7 @@ ensure_antigravity() {
     return 0
   fi
   if [ ! -x "$ANTIGRAVITY_APP" ]; then
-    fail_and_notify "Antigravity app not found at $ANTIGRAVITY_APP"
+    return 1
   fi
   echo "starting Antigravity CDP instance"
   "$ANTIGRAVITY_APP" --remote-debugging-port=9224 >/tmp/antigravity-opencli.log 2>&1 &
@@ -128,13 +129,90 @@ switch_model_if_needed() {
     fi
   fi
 
-  # One more read-based confirmation before failing hard.
   if current_model_is_target; then
     echo "model appears to be target despite switch instability: $MODEL_LABEL"
     return 0
   fi
 
   return 1
+}
+
+antigravity_generate() {
+  local prompt_file="$1"
+  local read_json="$2"
+  local raw_hints="$3"
+  local out_file="$4"
+  local start_epoch absolute_artifact_path candidate
+
+  ensure_antigravity || return 1
+  run_opencli_step "opencli antigravity status" $OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || return 1
+  run_opencli_step "opencli antigravity new" $OPENCLI_BIN antigravity new -f json >/dev/null 2>&1 || return 1
+  switch_model_if_needed || return 1
+  run_opencli_step "opencli antigravity send" $OPENCLI_BIN antigravity send "$(cat "$prompt_file")" -f json >/dev/null 2>&1 || return 1
+
+  start_epoch="$(date +%s)"
+  absolute_artifact_path=""
+  for _ in $(seq 1 30); do
+    sleep 15
+    if $OPENCLI_BIN antigravity read -f json > "$read_json" 2>/dev/null; then
+      set +e
+      absolute_artifact_path="$(python3 - "$read_json" "$raw_hints" <<'PY'
+import json, re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+out = Path(sys.argv[2])
+try:
+    data = json.loads(p.read_text())
+except Exception:
+    sys.exit(1)
+text = "\n".join(item.get("content", "") for item in data if isinstance(item, dict))
+out.write_text(text)
+m = re.search(r'ARTIFACT_PATH:\s*(\S+reflection_post\.md)', text)
+if not m:
+    sys.exit(2)
+print(m.group(1))
+PY
+)"
+      status=$?
+      set -e
+      if [ $status -eq 0 ] && [ -n "$absolute_artifact_path" ]; then
+        break
+      fi
+    fi
+    candidate="$(find "$HOME/.gemini/antigravity/brain" -name "$ARTIFACT_NAME" -type f -newermt "@$start_epoch" 2>/dev/null | head -1 || true)"
+    if [ -n "$candidate" ] && [ -s "$candidate" ]; then
+      absolute_artifact_path="$candidate"
+      break
+    fi
+  done
+
+  if [ -z "$absolute_artifact_path" ]; then
+    candidate="$(find "$HOME/.gemini/antigravity/brain" -name "$ARTIFACT_NAME" -type f -newermt "@$start_epoch" 2>/dev/null | head -1 || true)"
+    if [ -n "$candidate" ] && [ -s "$candidate" ]; then
+      absolute_artifact_path="$candidate"
+    fi
+  fi
+
+  if [ -z "$absolute_artifact_path" ] || [ ! -s "$absolute_artifact_path" ]; then
+    return 1
+  fi
+
+  echo "artifact path: $absolute_artifact_path"
+  cp "$absolute_artifact_path" "$out_file"
+  return 0
+}
+
+codex_fallback_generate() {
+  local prompt_file="$1"
+  local out_file="$2"
+  local raw_file="$3"
+  if [ ! -x "$CODEX_BIN" ]; then
+    return 1
+  fi
+  echo "falling back to codex direct generation"
+  $CODEX_BIN exec --model gpt-5.3-codex --full-auto -C "$REPO" -o "$out_file" < "$prompt_file" > "$raw_file" 2>&1 || return 1
+  [ -s "$out_file" ] || return 1
+  return 0
 }
 
 exec >>"$LOG_FILE" 2>&1
@@ -183,7 +261,8 @@ PROMPT_FILE="$ARTIFACT_DIR/antigravity-prompt.txt"
 READ_JSON="$ARTIFACT_DIR/antigravity-read.json"
 OUT_FILE="$ARTIFACT_DIR/antigravity-output.md"
 RAW_HINTS="$ARTIFACT_DIR/antigravity-hints.txt"
-rm -f "$READ_JSON" "$OUT_FILE" "$RAW_HINTS"
+FALLBACK_RAW="$ARTIFACT_DIR/codex-fallback.raw.txt"
+rm -f "$READ_JSON" "$OUT_FILE" "$RAW_HINTS" "$FALLBACK_RAW"
 
 cat > "$PROMPT_FILE" <<EOF
 Write a PUBLIC reflection blog post from the daily review below.
@@ -194,12 +273,7 @@ Requirements:
 - Remove private identifiers, handles, email addresses, and overly specific personal traces.
 - Focus on durable workflow / judgment / system / engineering lessons.
 - End with an unresolved tension, not a neat conclusion.
-- Save the final markdown to a file named ${ARTIFACT_NAME}.
-- Then reply in chat with exactly one line in this format:
-ARTIFACT_PATH: <absolute path to ${ARTIFACT_NAME}>
-- Do not paste the article body into chat.
-
-Exact markdown file format:
+- Output ONLY the final markdown document in this exact format:
 ---
 title: "..."
 date: ${DATE}
@@ -213,64 +287,17 @@ Daily Review source:
 EOF
 cat "$SANITIZED_REVIEW" >> "$PROMPT_FILE"
 
-ensure_antigravity || fail_and_notify "Antigravity CDP endpoint unavailable"
-run_opencli_step "opencli antigravity status" $OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity status failed"
-run_opencli_step "opencli antigravity new" $OPENCLI_BIN antigravity new -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity new failed"
-switch_model_if_needed || fail_and_notify "opencli antigravity model switch failed"
-run_opencli_step "opencli antigravity send" $OPENCLI_BIN antigravity send "$(cat "$PROMPT_FILE")" -f json >/dev/null 2>&1 || fail_and_notify "opencli antigravity send failed"
-
-START_EPOCH="$(date +%s)"
-ABSOLUTE_ARTIFACT_PATH=""
-for _ in $(seq 1 30); do
-  sleep 15
-  if $OPENCLI_BIN antigravity read -f json > "$READ_JSON" 2>/dev/null; then
-    set +e
-    ABSOLUTE_ARTIFACT_PATH="$(python3 - "$READ_JSON" "$RAW_HINTS" <<'PY'
-import json, re, sys
-from pathlib import Path
-p = Path(sys.argv[1])
-out = Path(sys.argv[2])
-try:
-    data = json.loads(p.read_text())
-except Exception:
-    sys.exit(1)
-text = "\n".join(item.get("content", "") for item in data if isinstance(item, dict))
-out.write_text(text)
-m = re.search(r'ARTIFACT_PATH:\s*(\S+reflection_post\.md)', text)
-if not m:
-    sys.exit(2)
-print(m.group(1))
-PY
-)"
-    status=$?
-    set -e
-    if [ $status -eq 0 ] && [ -n "$ABSOLUTE_ARTIFACT_PATH" ]; then
-      break
-    fi
-  fi
-  CANDIDATE="$(find "$HOME/.gemini/antigravity/brain" -name "$ARTIFACT_NAME" -type f -newermt "@$START_EPOCH" 2>/dev/null | head -1 || true)"
-  if [ -n "$CANDIDATE" ] && [ -s "$CANDIDATE" ]; then
-    ABSOLUTE_ARTIFACT_PATH="$CANDIDATE"
-    break
-  fi
-done
-
-if [ -z "$ABSOLUTE_ARTIFACT_PATH" ]; then
-  CANDIDATE="$(find "$HOME/.gemini/antigravity/brain" -name "$ARTIFACT_NAME" -type f -newermt "@$START_EPOCH" 2>/dev/null | head -1 || true)"
-  if [ -n "$CANDIDATE" ] && [ -s "$CANDIDATE" ]; then
-    ABSOLUTE_ARTIFACT_PATH="$CANDIDATE"
+GENERATOR="antigravity"
+if ! antigravity_generate "$PROMPT_FILE" "$READ_JSON" "$RAW_HINTS" "$OUT_FILE"; then
+  echo "antigravity generation failed; falling back to direct codex generation"
+  notify "magma-blog 自动发布降级（${DATE}）\n- Antigravity 流程失败，开始切换到本地兜底生成。\n- 失败点：见日志中的最近一条 Antigravity 错误。"
+  if codex_fallback_generate "$PROMPT_FILE" "$OUT_FILE" "$FALLBACK_RAW"; then
+    GENERATOR="codex-fallback"
+  else
+    fail_and_notify "antigravity failed and codex fallback also failed"
   fi
 fi
 
-if [ -z "$ABSOLUTE_ARTIFACT_PATH" ]; then
-  fail_and_notify "antigravity artifact path not found"
-fi
-if [ ! -s "$ABSOLUTE_ARTIFACT_PATH" ]; then
-  fail_and_notify "antigravity artifact missing or empty"
-fi
-
-echo "artifact path: $ABSOLUTE_ARTIFACT_PATH"
-cp "$ABSOLUTE_ARTIFACT_PATH" "$OUT_FILE"
 cp "$OUT_FILE" "$BLOG_FILE"
 
 if ! grep -q '^title:' "$OUT_FILE" || ! grep -q '^date: ' "$OUT_FILE" || ! grep -q '^description:' "$OUT_FILE" || ! grep -q '^tags:' "$OUT_FILE"; then
@@ -298,14 +325,16 @@ These are durable workflow improvements beyond a single review day.
 
 ## Trace
 - Source: $REVIEW_FILE
-- Generation: opencli antigravity via ${MODEL_LABEL}
-- Artifact: $ABSOLUTE_ARTIFACT_PATH
+- Generator: $GENERATOR
 EOF
 
 echo "building"
 npm run build || fail_and_notify "build failed"
 
-git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$SANITIZED_REVIEW" "$OUT_FILE" "$READ_JSON" "$RAW_HINTS"
+git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$SANITIZED_REVIEW" "$OUT_FILE"
+[ -f "$READ_JSON" ] && git add "$READ_JSON"
+[ -f "$RAW_HINTS" ] && git add "$RAW_HINTS"
+[ -f "$FALLBACK_RAW" ] && git add "$FALLBACK_RAW"
 if git diff --cached --quiet; then
   echo "no staged diff after generation"
   exit 0
@@ -316,7 +345,7 @@ git push origin HEAD || fail_and_notify "git push failed"
 
 rm -f "$FAIL_FLAG"
 if [ ! -f "$SUCCESS_FLAG" ]; then
-  if notify "magma-blog 自动发布已恢复（${DATE}）\n- 状态：发布成功\n- 后续同日期不会再重试。"; then
+  if notify "magma-blog 自动发布已恢复（${DATE}）\n- 状态：发布成功\n- 生成路径：${GENERATOR}\n- 后续同日期不会再重试。"; then
     : > "$SUCCESS_FLAG"
     echo "success notification sent"
   else
