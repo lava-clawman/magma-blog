@@ -157,28 +157,28 @@ if multi:
     out.write_text(multi.group(0).strip() + '\n')
     raise SystemExit(0)
 
-flat_pat = re.compile(r'title:\s*"(?P<title>.*?)"\s+date:\s*(?P<date>\d{4}-\d{2}-\d{2})\s+description:\s*"(?P<desc>.*?)"\s+tags:\s*(?P<tags>\[.*?\])\s+(?P<body>.*?)(?=\n(?:Thought for|Copy|Ask anything|Planning|Send)|\Z)', re.S)
-candidates = []
-for m in flat_pat.finditer(text):
-    title = m.group('title').strip()
-    desc = m.group('desc').strip()
-    tags = m.group('tags').strip()
-    body = m.group('body').strip()
-    if title == '...' or desc == '...' or tags == '["reflection", "..."]':
-        continue
-    if len(body) < 200:
-        continue
-    candidates.append((title, desc, tags, body))
-if not candidates:
+# Prefer the last real title block, not the prompt template at the front.
+title_iter = list(re.finditer(r'title:\s*"([^"]+)"', text))
+real_start = None
+for m in reversed(title_iter):
+    title = m.group(1).strip()
+    if title and title != '...':
+        real_start = m.start()
+        break
+if real_start is None:
     raise SystemExit(2)
-title, desc, tags, body = candidates[-1]
-body = re.sub(r'\n(?:Copy|Ask anything.*|Planning|Send)\s*$', '', body, flags=re.S).strip()
+chunk = text[real_start:]
+flat = re.search(r'title:\s*"(?P<title>[^"]+)"\s*\ndate:\s*(?P<date>\d{4}-\d{2}-\d{2})\s*\ndescription:\s*"(?P<desc>[^"]+)"\s*\ntags:\s*(?P<tags>\[.*?\])\s*\n(?P<body>.*)', chunk, re.S)
+if not flat:
+    raise SystemExit(2)
+body = flat.group('body')
+body = re.sub(r'\n(?:Copy|Ask anything.*|Planning|Thinking\.|Send)\s*$', '', body, flags=re.S).strip()
 match = (
     '---\n'
-    f'title: "{title}"\n'
-    f'date: {date}\n'
-    f'description: "{desc}"\n'
-    f'tags: {tags}\n'
+    f'title: "{flat.group("title").strip()}"\n'
+    f'date: {flat.group("date").strip()}\n'
+    f'description: "{flat.group("desc").strip()}"\n'
+    f'tags: {flat.group("tags").strip()}\n'
     '---\n\n'
     + body + '\n'
 )
