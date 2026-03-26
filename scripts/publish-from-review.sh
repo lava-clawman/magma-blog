@@ -152,21 +152,28 @@ except Exception:
     raise SystemExit(1)
 text = "\n".join(item.get("content", "") for item in data if isinstance(item, dict))
 # Prefer a full markdown doc with frontmatter.
-patterns = [
-    re.compile(r'---\s*\ntitle:\s*".*?"\s*\ndate:\s*' + re.escape(date) + r'\s*\ndescription:\s*".*?"\s*\ntags:\s*\[.*?\]\s*\n---\s*\n.*', re.S),
-    re.compile(r'title:\s*".*?"\s*\ndate:\s*' + re.escape(date) + r'\s*\ndescription:\s*".*?"\s*\ntags:\s*\[.*?\]\s*\n.*', re.S),
-]
-match = None
-for pat in patterns:
-    m = pat.search(text)
-    if m:
-        match = m.group(0).strip()
-        break
-if not match:
+# Case 1: normal multi-line frontmatter already present.
+multi = re.search(r'---\s*\ntitle:\s*".*?"\s*\ndate:\s*' + re.escape(date) + r'\s*\ndescription:\s*".*?"\s*\ntags:\s*\[.*?\]\s*\n---\s*\n.*', text, re.S)
+if multi:
+    out.write_text(multi.group(0).strip() + '\n')
+    raise SystemExit(0)
+
+# Case 2: compressed frontmatter on one line, then body.
+flat = re.search(r'title:\s*"(?P<title>.*?)"\s+date:\s*(?P<date>\d{4}-\d{2}-\d{2})\s+description:\s*"(?P<desc>.*?)"\s+tags:\s*(?P<tags>\[.*?\])\s+(?P<body>.*)', text, re.S)
+if not flat:
     raise SystemExit(2)
-if not match.startswith('---'):
-    match = '---\n' + match
-out.write_text(match + '\n')
+body = flat.group('body')
+body = re.sub(r'\n(?:Copy|Ask anything.*|Planning|Send)\s*$', '', body, flags=re.S).strip()
+match = (
+    '---\n'
+    f'title: "{flat.group("title")}"\n'
+    f'date: {flat.group("date")}\n'
+    f'description: "{flat.group("desc")}"\n'
+    f'tags: {flat.group("tags")}\n'
+    '---\n\n'
+    + body + '\n'
+)
+out.write_text(match)
 PY
 }
 
