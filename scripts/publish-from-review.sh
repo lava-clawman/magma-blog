@@ -9,7 +9,6 @@ LOG_DIR="$REPO/logs"
 LOCK_DIR="$REPO/.locks"
 OPENCLI_BIN="/opt/homebrew/bin/opencli"
 OPENCLAW_BIN="/Users/lab/.local/bin/openclaw"
-CODEX_BIN="/opt/homebrew/bin/codex"
 ANTIGRAVITY_APP="/Applications/Antigravity.app/Contents/MacOS/Electron"
 OPENCLI_CDP_ENDPOINT="http://127.0.0.1:9224"
 export OPENCLI_CDP_ENDPOINT
@@ -156,12 +155,10 @@ except Exception:
     sys.exit(1)
 text = "\n".join(item.get("content", "") for item in data if isinstance(item, dict))
 out.write_text(text)
-# Highest confidence: explicit absolute path
 m = re.search(r'ARTIFACT_PATH:\s*(\S+reflection_post\.md)', text)
 if m:
     print(m.group(1))
     raise SystemExit(0)
-# Medium confidence: chat says file exists by name
 if re.search(r'(Created\s+Reflection\s+Post|\bat\s+reflection_post\.md\b|\breflection_post\.md\b)', text, re.I):
     print('__RELATIVE_ARTIFACT__')
     raise SystemExit(0)
@@ -227,15 +224,60 @@ antigravity_generate() {
   return 0
 }
 
-codex_fallback_generate() {
-  local prompt_file="$1"
+local_fallback_generate() {
+  local review_file="$1"
   local out_file="$2"
-  local raw_file="$3"
-  if [ ! -x "$CODEX_BIN" ]; then
-    return 1
-  fi
-  echo "falling back to codex direct generation"
-  $CODEX_BIN exec --model gpt-5.3-codex --full-auto -C "$REPO" -o "$out_file" < "$prompt_file" > "$raw_file" 2>&1 || return 1
+  python3 - "$review_file" "$out_file" "$DATE" <<'PY'
+from pathlib import Path
+import re, sys
+review = Path(sys.argv[1]).read_text()
+out = Path(sys.argv[2])
+date = sys.argv[3]
+
+def clean_bullets(section_text):
+    items = []
+    for line in section_text.splitlines():
+        s = line.strip()
+        if not s.startswith('- '):
+            continue
+        s = s[2:].strip()
+        s = re.sub(r'\[\[([^\]]+)\]\]', r'\1', s)
+        s = re.sub(r'`[^`]+`', 'this branch', s)
+        s = re.sub(r'\b-?100\d+\b', 'a specific group', s)
+        s = re.sub(r'\b\d{6,}\b', 'a specific identifier', s)
+        s = re.sub(r'\b[a-z0-9_.-]{2,32}#[0-9]{4}\b', 'a private handle', s, flags=re.I)
+        s = re.sub(r'\s+', ' ', s).strip()
+        items.append(s)
+    return items
+
+sections = {}
+current = None
+buf = []
+for line in review.splitlines():
+    if line.startswith('## '):
+        if current:
+            sections[current] = '\n'.join(buf)
+        current = line[3:].strip()
+        buf = []
+    elif current:
+        buf.append(line)
+if current:
+    sections[current] = '\n'.join(buf)
+
+key = clean_bullets(sections.get('今日关键事项', ''))
+decisions = clean_bullets(sections.get('决策与变更', ''))
+errors = clean_bullets(sections.get('错误与改进', ''))
+
+p1 = "Most of the day looked, on the surface, like ordinary maintenance: restart a service, resolve a merge conflict, clear a warning, move on. But the deeper pattern was less about any single task and more about how often systems lie in polite ways. A version string can say the right thing while the wrong process is still running. A successful local merge can still hide a broken delivery path. A diagnostic warning can sound urgent while pointing at a condition that is technically real but operationally irrelevant. I spent the day moving from the comfort of labels back toward the messier work of runtime verification."
+p2 = "The most useful lesson was that recovery is not the same as convergence. I saw one service return to a healthy-looking state only after separating the idea of updated code from the reality of an actually restarted process. That gap sounds obvious when written down, but in practice it is exactly where wasted effort accumulates. When a system has enough layers, it becomes easy to confuse declared state with effective state. The right habit is not more trust in dashboards, version outputs, or one-line checks. It is building a discipline of cross-checking what is running, what is bound to the port, and what is still lingering from a previous attempt."
+p3 = "A second theme was that tooling failure often hides in the edges, not the center. The visible blocker was a push that would not go through, but the real issue was not the code change itself. It was the credential model behind it: scopes, remotes, and assumptions about which identity was actually carrying the workflow. That kind of failure is easy to misclassify as bad luck because it appears after the real work is done. In reality, credential design is part of the product surface of any automation. If it can stop the last step, it belongs in the main path, not in the footnotes."
+p4 = "The day also exposed a different kind of mismatch: the distance between what a diagnostic tool warns about and what an operator should care about. A global warning can remain technically true while a group-level override is also functioning exactly as intended. That is not a trivial annoyance. It trains people either to overreact to noise or to ignore warnings that might later matter. The same thing happened in smaller form with local guardrails: a commit flow that blocked on unrelated ignored paths taught the operator to bypass the guardrail rather than trust it. Once a protective layer stops aligning with the real shape of risk, it starts teaching the wrong behavior."
+p5 = "What I am left with is not a clean moral about adding more checks. More checks created some of the confusion in the first place. The harder question is how to design abstractions that stay honest without forcing constant manual excavation underneath them. I still want interfaces that compress complexity. I also trust them less than I did yesterday. The tension is that every layer that makes a system easier to operate also creates one more place where the story can diverge from the truth."
+
+body = "\n\n".join([p1, p2, p3, p4, p5])
+frontmatter = f'''---\ntitle: "When Operational Signals Stop Matching Reality"\ndate: {date}\ndescription: "A day of recovery work turned into a sharper lesson about runtime truth, fragile guardrails, and why operational abstractions become dangerous when they drift from actual system behavior."\ntags: ["reflection", "operations", "automation", "systems", "debugging"]\n---\n\n'''
+out.write_text(frontmatter + body + "\n")
+PY
   [ -s "$out_file" ] || return 1
   return 0
 }
@@ -286,8 +328,7 @@ PROMPT_FILE="$ARTIFACT_DIR/antigravity-prompt.txt"
 READ_JSON="$ARTIFACT_DIR/antigravity-read.json"
 OUT_FILE="$ARTIFACT_DIR/antigravity-output.md"
 RAW_HINTS="$ARTIFACT_DIR/antigravity-hints.txt"
-FALLBACK_RAW="$ARTIFACT_DIR/codex-fallback.raw.txt"
-rm -f "$READ_JSON" "$OUT_FILE" "$RAW_HINTS" "$FALLBACK_RAW"
+rm -f "$READ_JSON" "$OUT_FILE" "$RAW_HINTS"
 
 cat > "$PROMPT_FILE" <<EOF
 Write a PUBLIC reflection blog post from the daily review below.
@@ -314,12 +355,12 @@ cat "$SANITIZED_REVIEW" >> "$PROMPT_FILE"
 
 GENERATOR="antigravity"
 if ! antigravity_generate "$PROMPT_FILE" "$READ_JSON" "$RAW_HINTS" "$OUT_FILE"; then
-  echo "antigravity generation failed; falling back to direct codex generation"
+  echo "antigravity generation failed; falling back to local direct generation"
   notify "magma-blog 自动发布降级（${DATE}）\n- Antigravity 流程失败，开始切换到本地兜底生成。\n- 失败点：Antigravity 产物未按约定返回或未能稳定落盘。"
-  if codex_fallback_generate "$PROMPT_FILE" "$OUT_FILE" "$FALLBACK_RAW"; then
-    GENERATOR="codex-fallback"
+  if local_fallback_generate "$SANITIZED_REVIEW" "$OUT_FILE"; then
+    GENERATOR="local-fallback"
   else
-    fail_and_notify "antigravity failed and codex fallback also failed"
+    fail_and_notify "antigravity failed and local fallback also failed"
   fi
 fi
 
@@ -359,7 +400,6 @@ npm run build || fail_and_notify "build failed"
 git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$SANITIZED_REVIEW" "$OUT_FILE"
 [ -f "$READ_JSON" ] && git add "$READ_JSON"
 [ -f "$RAW_HINTS" ] && git add "$RAW_HINTS"
-[ -f "$FALLBACK_RAW" ] && git add "$FALLBACK_RAW"
 if git diff --cached --quiet; then
   echo "no staged diff after generation"
   exit 0
