@@ -157,17 +157,28 @@ if multi:
     out.write_text(multi.group(0).strip() + '\n')
     raise SystemExit(0)
 
-flat = re.search(r'title:\s*"(?P<title>.*?)"\s+date:\s*(?P<date>\d{4}-\d{2}-\d{2})\s+description:\s*"(?P<desc>.*?)"\s+tags:\s*(?P<tags>\[.*?\])\s+(?P<body>.*)', text, re.S)
-if not flat:
+flat_pat = re.compile(r'title:\s*"(?P<title>.*?)"\s+date:\s*(?P<date>\d{4}-\d{2}-\d{2})\s+description:\s*"(?P<desc>.*?)"\s+tags:\s*(?P<tags>\[.*?\])\s+(?P<body>.*?)(?=\n(?:Thought for|Copy|Ask anything|Planning|Send)|\Z)', re.S)
+candidates = []
+for m in flat_pat.finditer(text):
+    title = m.group('title').strip()
+    desc = m.group('desc').strip()
+    tags = m.group('tags').strip()
+    body = m.group('body').strip()
+    if title == '...' or desc == '...' or tags == '["reflection", "..."]':
+        continue
+    if len(body) < 200:
+        continue
+    candidates.append((title, desc, tags, body))
+if not candidates:
     raise SystemExit(2)
-body = flat.group('body')
+title, desc, tags, body = candidates[-1]
 body = re.sub(r'\n(?:Copy|Ask anything.*|Planning|Send)\s*$', '', body, flags=re.S).strip()
 match = (
     '---\n'
-    f'title: "{flat.group("title")}"\n'
-    f'date: {flat.group("date")}\n'
-    f'description: "{flat.group("desc")}"\n'
-    f'tags: {flat.group("tags")}\n'
+    f'title: "{title}"\n'
+    f'date: {date}\n'
+    f'description: "{desc}"\n'
+    f'tags: {tags}\n'
     '---\n\n'
     + body + '\n'
 )
