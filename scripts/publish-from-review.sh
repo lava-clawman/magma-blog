@@ -157,7 +157,7 @@ if multi:
     out.write_text(multi.group(0).strip() + '\n')
     raise SystemExit(0)
 
-# Prefer the last real title block, not the prompt template at the front.
+# Prefer the last real title block, then reconstruct valid YAML even if frontmatter is flattened.
 title_iter = list(re.finditer(r'title:\s*"([^"]+)"', text))
 real_start = None
 for m in reversed(title_iter):
@@ -168,17 +168,26 @@ for m in reversed(title_iter):
 if real_start is None:
     raise SystemExit(2)
 chunk = text[real_start:]
-flat = re.search(r'title:\s*"(?P<title>[^"]+)"\s*\ndate:\s*(?P<date>\d{4}-\d{2}-\d{2})\s*\ndescription:\s*"(?P<desc>[^"]+)"\s*\ntags:\s*(?P<tags>\[.*?\])\s*\n(?P<body>.*)', chunk, re.S)
+flat = re.search(r'title:\s*"(?P<title>[^"]+)"\s+date:\s*(?P<date>\d{4}-\d{2}-\d{2})\s+description:\s*"(?P<desc>[^"]+)"\s+tags:\s*(?P<tags>\[.*?\])\s+(?P<body>.*)', chunk, re.S)
 if not flat:
     raise SystemExit(2)
 body = flat.group('body')
-body = re.sub(r'\n(?:Copy|Ask anything.*|Planning|Thinking\.|Send)\s*$', '', body, flags=re.S).strip()
+body = re.sub(r'\n(?:Thinking\.|Copy|Ask anything.*|Planning|Send)\s*$', '', body, flags=re.S).strip()
+# Normalize tags to YAML list for robustness.
+tag_values = [t.strip().strip('"'') for t in re.findall(r'"([^"]+)"', flat.group('tags'))]
+if not tag_values:
+    tag_values = ['reflection']
+tags_yaml = '\n'.join(f'  - {t}' for t in tag_values)
+# Escape double quotes in scalar strings.
+title = flat.group('title').replace('"', '\"').strip()
+desc = flat.group('desc').replace('"', '\"').strip()
 match = (
     '---\n'
-    f'title: "{flat.group("title").strip()}"\n'
+    f'title: "{title}"\n'
     f'date: {flat.group("date").strip()}\n'
-    f'description: "{flat.group("desc").strip()}"\n'
-    f'tags: {flat.group("tags").strip()}\n'
+    f'description: "{desc}"\n'
+    'tags:\n'
+    f'{tags_yaml}\n'
     '---\n\n'
     + body + '\n'
 )
