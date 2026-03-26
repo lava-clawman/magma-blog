@@ -174,7 +174,7 @@ if not flat:
 body = flat.group('body')
 body = re.sub(r'\n(?:Thinking\.|Copy|Ask anything.*|Planning|Send)\s*$', '', body, flags=re.S).strip()
 # Normalize tags to YAML list for robustness.
-tag_values = [t.strip().strip('"'') for t in re.findall(r'"([^"]+)"', flat.group('tags'))]
+tag_values = [t.strip().strip('"').strip("'") for t in re.findall(r'"([^"]+)"', flat.group('tags'))]
 if not tag_values:
     tag_values = ['reflection']
 tags_yaml = '\n'.join(f'  - {t}' for t in tag_values)
