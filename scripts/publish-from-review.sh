@@ -26,6 +26,7 @@ SUCCESS_FLAG="$ARTIFACT_DIR/.success-notified"
 CHANNEL_TARGET="channel:1484517576985022545"
 MODEL_LABEL="Claude Opus 4.6 (Thinking)"
 ARTIFACT_NAME="reflection_post.md"
+TARGET_ARTIFACT="$ARTIFACT_DIR/$ARTIFACT_NAME"
 
 notify() {
   local text="$1"
@@ -136,11 +137,6 @@ switch_model_if_needed() {
   return 1
 }
 
-find_recent_artifact() {
-  local start_epoch="$1"
-  find "$HOME/.gemini/antigravity/brain" -name "$ARTIFACT_NAME" -type f -newermt "@$start_epoch" 2>/dev/null | head -1 || true
-}
-
 extract_artifact_hint() {
   local read_json="$1"
   local raw_hints="$2"
@@ -171,7 +167,9 @@ antigravity_generate() {
   local read_json="$2"
   local raw_hints="$3"
   local out_file="$4"
-  local start_epoch absolute_artifact_path candidate hint
+  local absolute_artifact_path hint i
+
+  rm -f "$TARGET_ARTIFACT"
 
   ensure_antigravity || return 1
   run_opencli_step "opencli antigravity status" $OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || return 1
@@ -179,40 +177,64 @@ antigravity_generate() {
   switch_model_if_needed || return 1
   run_opencli_step "opencli antigravity send" $OPENCLI_BIN antigravity send "$(cat "$prompt_file")" -f json >/dev/null 2>&1 || return 1
 
-  start_epoch="$(date +%s)"
   absolute_artifact_path=""
-  for _ in $(seq 1 30); do
-    sleep 15
+
+  # Fast window: up to 60s, prioritize concrete file existence.
+  for i in 1 2 3 4 5 6; do
+    sleep 10
+    if [ -s "$TARGET_ARTIFACT" ]; then
+      absolute_artifact_path="$TARGET_ARTIFACT"
+      echo "target artifact appeared during fast window"
+      break
+    fi
     if $OPENCLI_BIN antigravity read -f json > "$read_json" 2>/dev/null; then
       set +e
       hint="$(extract_artifact_hint "$read_json" "$raw_hints")"
       status=$?
       set -e
       if [ $status -eq 0 ] && [ -n "$hint" ]; then
-        if [ "$hint" = "__RELATIVE_ARTIFACT__" ]; then
-          candidate="$(find_recent_artifact "$start_epoch")"
-          if [ -n "$candidate" ] && [ -s "$candidate" ]; then
-            absolute_artifact_path="$candidate"
-            break
-          fi
-        elif [ -f "$hint" ]; then
+        if [ "$hint" = "__RELATIVE_ARTIFACT__" ] && [ -s "$TARGET_ARTIFACT" ]; then
+          absolute_artifact_path="$TARGET_ARTIFACT"
+          break
+        elif [ "$hint" = "$TARGET_ARTIFACT" ] && [ -s "$TARGET_ARTIFACT" ]; then
+          absolute_artifact_path="$TARGET_ARTIFACT"
+          break
+        elif [ -f "$hint" ] && [ -s "$hint" ]; then
           absolute_artifact_path="$hint"
           break
         fi
       fi
     fi
-    candidate="$(find_recent_artifact "$start_epoch")"
-    if [ -n "$candidate" ] && [ -s "$candidate" ]; then
-      absolute_artifact_path="$candidate"
-      break
-    fi
   done
 
+  # Grace window: another 60s max, but still prefer explicit target file.
   if [ -z "$absolute_artifact_path" ]; then
-    candidate="$(find_recent_artifact "$start_epoch")"
-    if [ -n "$candidate" ] && [ -s "$candidate" ]; then
-      absolute_artifact_path="$candidate"
-    fi
+    for i in 1 2 3 4 5 6; do
+      sleep 10
+      if [ -s "$TARGET_ARTIFACT" ]; then
+        absolute_artifact_path="$TARGET_ARTIFACT"
+        echo "target artifact appeared during grace window"
+        break
+      fi
+      if $OPENCLI_BIN antigravity read -f json > "$read_json" 2>/dev/null; then
+        set +e
+        hint="$(extract_artifact_hint "$read_json" "$raw_hints")"
+        status=$?
+        set -e
+        if [ $status -eq 0 ] && [ -n "$hint" ]; then
+          if [ "$hint" = "__RELATIVE_ARTIFACT__" ] && [ -s "$TARGET_ARTIFACT" ]; then
+            absolute_artifact_path="$TARGET_ARTIFACT"
+            break
+          elif [ "$hint" = "$TARGET_ARTIFACT" ] && [ -s "$TARGET_ARTIFACT" ]; then
+            absolute_artifact_path="$TARGET_ARTIFACT"
+            break
+          elif [ -f "$hint" ] && [ -s "$hint" ]; then
+            absolute_artifact_path="$hint"
+            break
+          fi
+        fi
+      fi
+    done
   fi
 
   if [ -z "$absolute_artifact_path" ] || [ ! -s "$absolute_artifact_path" ]; then
@@ -234,22 +256,6 @@ review = Path(sys.argv[1]).read_text()
 out = Path(sys.argv[2])
 date = sys.argv[3]
 
-def clean_bullets(section_text):
-    items = []
-    for line in section_text.splitlines():
-        s = line.strip()
-        if not s.startswith('- '):
-            continue
-        s = s[2:].strip()
-        s = re.sub(r'\[\[([^\]]+)\]\]', r'\1', s)
-        s = re.sub(r'`[^`]+`', 'this branch', s)
-        s = re.sub(r'\b-?100\d+\b', 'a specific group', s)
-        s = re.sub(r'\b\d{6,}\b', 'a specific identifier', s)
-        s = re.sub(r'\b[a-z0-9_.-]{2,32}#[0-9]{4}\b', 'a private handle', s, flags=re.I)
-        s = re.sub(r'\s+', ' ', s).strip()
-        items.append(s)
-    return items
-
 sections = {}
 current = None
 buf = []
@@ -263,10 +269,6 @@ for line in review.splitlines():
         buf.append(line)
 if current:
     sections[current] = '\n'.join(buf)
-
-key = clean_bullets(sections.get('今日关键事项', ''))
-decisions = clean_bullets(sections.get('决策与变更', ''))
-errors = clean_bullets(sections.get('错误与改进', ''))
 
 p1 = "Most of the day looked, on the surface, like ordinary maintenance: restart a service, resolve a merge conflict, clear a warning, move on. But the deeper pattern was less about any single task and more about how often systems lie in polite ways. A version string can say the right thing while the wrong process is still running. A successful local merge can still hide a broken delivery path. A diagnostic warning can sound urgent while pointing at a condition that is technically real but operationally irrelevant. I spent the day moving from the comfort of labels back toward the messier work of runtime verification."
 p2 = "The most useful lesson was that recovery is not the same as convergence. I saw one service return to a healthy-looking state only after separating the idea of updated code from the reality of an actually restarted process. That gap sounds obvious when written down, but in practice it is exactly where wasted effort accumulates. When a system has enough layers, it becomes easy to confuse declared state with effective state. The right habit is not more trust in dashboards, version outputs, or one-line checks. It is building a discipline of cross-checking what is running, what is bound to the port, and what is still lingering from a previous attempt."
@@ -328,18 +330,29 @@ PROMPT_FILE="$ARTIFACT_DIR/antigravity-prompt.txt"
 READ_JSON="$ARTIFACT_DIR/antigravity-read.json"
 OUT_FILE="$ARTIFACT_DIR/antigravity-output.md"
 RAW_HINTS="$ARTIFACT_DIR/antigravity-hints.txt"
-rm -f "$READ_JSON" "$OUT_FILE" "$RAW_HINTS"
+rm -f "$READ_JSON" "$OUT_FILE" "$RAW_HINTS" "$TARGET_ARTIFACT"
 
 cat > "$PROMPT_FILE" <<EOF
 Write a PUBLIC reflection blog post from the daily review below.
 
-Requirements:
+HARD OUTPUT CONTRACT:
+- You MUST write the final markdown document to this exact absolute path:
+  ${TARGET_ARTIFACT}
+- The filename MUST be exactly:
+  ${ARTIFACT_NAME}
+- After writing the file, reply with exactly one line:
+  ARTIFACT_PATH: ${TARGET_ARTIFACT}
+- Do NOT reply with a relative path.
+- Do NOT reply with explanation, summary, or status text before the ARTIFACT_PATH line.
+- Output file content MUST be the final publishable markdown document.
+
+Content requirements:
 - Use first-person voice.
 - 500-900 words.
 - Remove private identifiers, handles, email addresses, and overly specific personal traces.
 - Focus on durable workflow / judgment / system / engineering lessons.
 - End with an unresolved tension, not a neat conclusion.
-- Output ONLY the final markdown document in this exact format:
+- Output markdown in this exact format:
 ---
 title: "..."
 date: ${DATE}
@@ -355,8 +368,8 @@ cat "$SANITIZED_REVIEW" >> "$PROMPT_FILE"
 
 GENERATOR="antigravity"
 if ! antigravity_generate "$PROMPT_FILE" "$READ_JSON" "$RAW_HINTS" "$OUT_FILE"; then
-  echo "antigravity generation failed; falling back to local direct generation"
-  notify "magma-blog 自动发布降级（${DATE}）\n- Antigravity 流程失败，开始切换到本地兜底生成。\n- 失败点：Antigravity 产物未按约定返回或未能稳定落盘。"
+  echo "antigravity generation failed after bounded wait; falling back to local direct generation"
+  notify "magma-blog 自动发布进入本地兜底（${DATE}）\n- Antigravity 在限定时间内未按约定写出指定产物。\n- 已开始切换到本地直接生成。"
   if local_fallback_generate "$SANITIZED_REVIEW" "$OUT_FILE"; then
     GENERATOR="local-fallback"
   else
@@ -400,6 +413,7 @@ npm run build || fail_and_notify "build failed"
 git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$SANITIZED_REVIEW" "$OUT_FILE"
 [ -f "$READ_JSON" ] && git add "$READ_JSON"
 [ -f "$RAW_HINTS" ] && git add "$RAW_HINTS"
+[ -f "$TARGET_ARTIFACT" ] && git add "$TARGET_ARTIFACT"
 if git diff --cached --quiet; then
   echo "no staged diff after generation"
   exit 0
