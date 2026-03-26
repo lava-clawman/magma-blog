@@ -137,12 +137,44 @@ switch_model_if_needed() {
   return 1
 }
 
+find_recent_artifact() {
+  local start_epoch="$1"
+  find "$HOME/.gemini/antigravity/brain" -name "$ARTIFACT_NAME" -type f -newermt "@$start_epoch" 2>/dev/null | head -1 || true
+}
+
+extract_artifact_hint() {
+  local read_json="$1"
+  local raw_hints="$2"
+  python3 - "$read_json" "$raw_hints" <<'PY'
+import json, re, sys
+from pathlib import Path
+p = Path(sys.argv[1])
+out = Path(sys.argv[2])
+try:
+    data = json.loads(p.read_text())
+except Exception:
+    sys.exit(1)
+text = "\n".join(item.get("content", "") for item in data if isinstance(item, dict))
+out.write_text(text)
+# Highest confidence: explicit absolute path
+m = re.search(r'ARTIFACT_PATH:\s*(\S+reflection_post\.md)', text)
+if m:
+    print(m.group(1))
+    raise SystemExit(0)
+# Medium confidence: chat says file exists by name
+if re.search(r'(Created\s+Reflection\s+Post|\bat\s+reflection_post\.md\b|\breflection_post\.md\b)', text, re.I):
+    print('__RELATIVE_ARTIFACT__')
+    raise SystemExit(0)
+raise SystemExit(2)
+PY
+}
+
 antigravity_generate() {
   local prompt_file="$1"
   local read_json="$2"
   local raw_hints="$3"
   local out_file="$4"
-  local start_epoch absolute_artifact_path candidate
+  local start_epoch absolute_artifact_path candidate hint
 
   ensure_antigravity || return 1
   run_opencli_step "opencli antigravity status" $OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || return 1
@@ -156,30 +188,23 @@ antigravity_generate() {
     sleep 15
     if $OPENCLI_BIN antigravity read -f json > "$read_json" 2>/dev/null; then
       set +e
-      absolute_artifact_path="$(python3 - "$read_json" "$raw_hints" <<'PY'
-import json, re, sys
-from pathlib import Path
-p = Path(sys.argv[1])
-out = Path(sys.argv[2])
-try:
-    data = json.loads(p.read_text())
-except Exception:
-    sys.exit(1)
-text = "\n".join(item.get("content", "") for item in data if isinstance(item, dict))
-out.write_text(text)
-m = re.search(r'ARTIFACT_PATH:\s*(\S+reflection_post\.md)', text)
-if not m:
-    sys.exit(2)
-print(m.group(1))
-PY
-)"
+      hint="$(extract_artifact_hint "$read_json" "$raw_hints")"
       status=$?
       set -e
-      if [ $status -eq 0 ] && [ -n "$absolute_artifact_path" ]; then
-        break
+      if [ $status -eq 0 ] && [ -n "$hint" ]; then
+        if [ "$hint" = "__RELATIVE_ARTIFACT__" ]; then
+          candidate="$(find_recent_artifact "$start_epoch")"
+          if [ -n "$candidate" ] && [ -s "$candidate" ]; then
+            absolute_artifact_path="$candidate"
+            break
+          fi
+        elif [ -f "$hint" ]; then
+          absolute_artifact_path="$hint"
+          break
+        fi
       fi
     fi
-    candidate="$(find "$HOME/.gemini/antigravity/brain" -name "$ARTIFACT_NAME" -type f -newermt "@$start_epoch" 2>/dev/null | head -1 || true)"
+    candidate="$(find_recent_artifact "$start_epoch")"
     if [ -n "$candidate" ] && [ -s "$candidate" ]; then
       absolute_artifact_path="$candidate"
       break
@@ -187,7 +212,7 @@ PY
   done
 
   if [ -z "$absolute_artifact_path" ]; then
-    candidate="$(find "$HOME/.gemini/antigravity/brain" -name "$ARTIFACT_NAME" -type f -newermt "@$start_epoch" 2>/dev/null | head -1 || true)"
+    candidate="$(find_recent_artifact "$start_epoch")"
     if [ -n "$candidate" ] && [ -s "$candidate" ]; then
       absolute_artifact_path="$candidate"
     fi
@@ -290,7 +315,7 @@ cat "$SANITIZED_REVIEW" >> "$PROMPT_FILE"
 GENERATOR="antigravity"
 if ! antigravity_generate "$PROMPT_FILE" "$READ_JSON" "$RAW_HINTS" "$OUT_FILE"; then
   echo "antigravity generation failed; falling back to direct codex generation"
-  notify "magma-blog 自动发布降级（${DATE}）\n- Antigravity 流程失败，开始切换到本地兜底生成。\n- 失败点：见日志中的最近一条 Antigravity 错误。"
+  notify "magma-blog 自动发布降级（${DATE}）\n- Antigravity 流程失败，开始切换到本地兜底生成。\n- 失败点：Antigravity 产物未按约定返回或未能稳定落盘。"
   if codex_fallback_generate "$PROMPT_FILE" "$OUT_FILE" "$FALLBACK_RAW"; then
     GENERATOR="codex-fallback"
   else
