@@ -137,28 +137,36 @@ switch_model_if_needed() {
   return 1
 }
 
-extract_artifact_hint() {
+extract_markdown_from_read_json() {
   local read_json="$1"
-  local raw_hints="$2"
-  python3 - "$read_json" "$raw_hints" <<'PY'
+  local out_file="$2"
+  python3 - "$read_json" "$out_file" "$DATE" <<'PY'
 import json, re, sys
 from pathlib import Path
 p = Path(sys.argv[1])
 out = Path(sys.argv[2])
+date = sys.argv[3]
 try:
     data = json.loads(p.read_text())
 except Exception:
-    sys.exit(1)
+    raise SystemExit(1)
 text = "\n".join(item.get("content", "") for item in data if isinstance(item, dict))
-out.write_text(text)
-m = re.search(r'ARTIFACT_PATH:\s*(\S+reflection_post\.md)', text)
-if m:
-    print(m.group(1))
-    raise SystemExit(0)
-if re.search(r'(Created\s+Reflection\s+Post|\bat\s+reflection_post\.md\b|\breflection_post\.md\b)', text, re.I):
-    print('__RELATIVE_ARTIFACT__')
-    raise SystemExit(0)
-raise SystemExit(2)
+# Prefer a full markdown doc with frontmatter.
+patterns = [
+    re.compile(r'---\s*\ntitle:\s*".*?"\s*\ndate:\s*' + re.escape(date) + r'\s*\ndescription:\s*".*?"\s*\ntags:\s*\[.*?\]\s*\n---\s*\n.*', re.S),
+    re.compile(r'title:\s*".*?"\s*\ndate:\s*' + re.escape(date) + r'\s*\ndescription:\s*".*?"\s*\ntags:\s*\[.*?\]\s*\n.*', re.S),
+]
+match = None
+for pat in patterns:
+    m = pat.search(text)
+    if m:
+        match = m.group(0).strip()
+        break
+if not match:
+    raise SystemExit(2)
+if not match.startswith('---'):
+    match = '---\n' + match
+out.write_text(match + '\n')
 PY
 }
 
@@ -167,9 +175,7 @@ antigravity_generate() {
   local read_json="$2"
   local raw_hints="$3"
   local out_file="$4"
-  local absolute_artifact_path hint i
-
-  rm -f "$TARGET_ARTIFACT"
+  local i
 
   ensure_antigravity || return 1
   run_opencli_step "opencli antigravity status" $OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || return 1
@@ -177,73 +183,31 @@ antigravity_generate() {
   switch_model_if_needed || return 1
   run_opencli_step "opencli antigravity send" $OPENCLI_BIN antigravity send "$(cat "$prompt_file")" -f json >/dev/null 2>&1 || return 1
 
-  absolute_artifact_path=""
-
-  # Fast window: up to 60s, prioritize concrete file existence.
+  # Fast window: 60s. Prefer extracting final markdown from chat payload directly.
   for i in 1 2 3 4 5 6; do
     sleep 10
-    if [ -s "$TARGET_ARTIFACT" ]; then
-      absolute_artifact_path="$TARGET_ARTIFACT"
-      echo "target artifact appeared during fast window"
-      break
-    fi
     if $OPENCLI_BIN antigravity read -f json > "$read_json" 2>/dev/null; then
-      set +e
-      hint="$(extract_artifact_hint "$read_json" "$raw_hints")"
-      status=$?
-      set -e
-      if [ $status -eq 0 ] && [ -n "$hint" ]; then
-        if [ "$hint" = "__RELATIVE_ARTIFACT__" ] && [ -s "$TARGET_ARTIFACT" ]; then
-          absolute_artifact_path="$TARGET_ARTIFACT"
-          break
-        elif [ "$hint" = "$TARGET_ARTIFACT" ] && [ -s "$TARGET_ARTIFACT" ]; then
-          absolute_artifact_path="$TARGET_ARTIFACT"
-          break
-        elif [ -f "$hint" ] && [ -s "$hint" ]; then
-          absolute_artifact_path="$hint"
-          break
-        fi
+      cp "$read_json" "$raw_hints"
+      if extract_markdown_from_read_json "$read_json" "$out_file"; then
+        echo "final markdown extracted from Antigravity read payload during fast window"
+        return 0
       fi
     fi
   done
 
-  # Grace window: another 60s max, but still prefer explicit target file.
-  if [ -z "$absolute_artifact_path" ]; then
-    for i in 1 2 3 4 5 6; do
-      sleep 10
-      if [ -s "$TARGET_ARTIFACT" ]; then
-        absolute_artifact_path="$TARGET_ARTIFACT"
-        echo "target artifact appeared during grace window"
-        break
+  # Grace window: another 60s.
+  for i in 1 2 3 4 5 6; do
+    sleep 10
+    if $OPENCLI_BIN antigravity read -f json > "$read_json" 2>/dev/null; then
+      cp "$read_json" "$raw_hints"
+      if extract_markdown_from_read_json "$read_json" "$out_file"; then
+        echo "final markdown extracted from Antigravity read payload during grace window"
+        return 0
       fi
-      if $OPENCLI_BIN antigravity read -f json > "$read_json" 2>/dev/null; then
-        set +e
-        hint="$(extract_artifact_hint "$read_json" "$raw_hints")"
-        status=$?
-        set -e
-        if [ $status -eq 0 ] && [ -n "$hint" ]; then
-          if [ "$hint" = "__RELATIVE_ARTIFACT__" ] && [ -s "$TARGET_ARTIFACT" ]; then
-            absolute_artifact_path="$TARGET_ARTIFACT"
-            break
-          elif [ "$hint" = "$TARGET_ARTIFACT" ] && [ -s "$TARGET_ARTIFACT" ]; then
-            absolute_artifact_path="$TARGET_ARTIFACT"
-            break
-          elif [ -f "$hint" ] && [ -s "$hint" ]; then
-            absolute_artifact_path="$hint"
-            break
-          fi
-        fi
-      fi
-    done
-  fi
+    fi
+  done
 
-  if [ -z "$absolute_artifact_path" ] || [ ! -s "$absolute_artifact_path" ]; then
-    return 1
-  fi
-
-  echo "artifact path: $absolute_artifact_path"
-  cp "$absolute_artifact_path" "$out_file"
-  return 0
+  return 1
 }
 
 local_fallback_generate() {
@@ -251,24 +215,10 @@ local_fallback_generate() {
   local out_file="$2"
   python3 - "$review_file" "$out_file" "$DATE" <<'PY'
 from pathlib import Path
-import re, sys
+import sys
 review = Path(sys.argv[1]).read_text()
 out = Path(sys.argv[2])
 date = sys.argv[3]
-
-sections = {}
-current = None
-buf = []
-for line in review.splitlines():
-    if line.startswith('## '):
-        if current:
-            sections[current] = '\n'.join(buf)
-        current = line[3:].strip()
-        buf = []
-    elif current:
-        buf.append(line)
-if current:
-    sections[current] = '\n'.join(buf)
 
 p1 = "Most of the day looked, on the surface, like ordinary maintenance: restart a service, resolve a merge conflict, clear a warning, move on. But the deeper pattern was less about any single task and more about how often systems lie in polite ways. A version string can say the right thing while the wrong process is still running. A successful local merge can still hide a broken delivery path. A diagnostic warning can sound urgent while pointing at a condition that is technically real but operationally irrelevant. I spent the day moving from the comfort of labels back toward the messier work of runtime verification."
 p2 = "The most useful lesson was that recovery is not the same as convergence. I saw one service return to a healthy-looking state only after separating the idea of updated code from the reality of an actually restarted process. That gap sounds obvious when written down, but in practice it is exactly where wasted effort accumulates. When a system has enough layers, it becomes easy to confuse declared state with effective state. The right habit is not more trust in dashboards, version outputs, or one-line checks. It is building a discipline of cross-checking what is running, what is bound to the port, and what is still lingering from a previous attempt."
@@ -336,23 +286,14 @@ cat > "$PROMPT_FILE" <<EOF
 Write a PUBLIC reflection blog post from the daily review below.
 
 HARD OUTPUT CONTRACT:
-- You MUST write the final markdown document to this exact absolute path:
-  ${TARGET_ARTIFACT}
-- The filename MUST be exactly:
-  ${ARTIFACT_NAME}
-- After writing the file, reply with exactly one line:
-  ARTIFACT_PATH: ${TARGET_ARTIFACT}
-- Do NOT reply with a relative path.
-- Do NOT reply with explanation, summary, or status text before the ARTIFACT_PATH line.
-- Output file content MUST be the final publishable markdown document.
+- Return the FINAL publishable markdown document directly in the chat response.
+- Do NOT ask follow-up questions.
+- Do NOT describe what you plan to write.
+- Do NOT say you created a file.
+- Do NOT return status text like "Created Reflection Post".
+- Output ONLY the final markdown document.
 
-Content requirements:
-- Use first-person voice.
-- 500-900 words.
-- Remove private identifiers, handles, email addresses, and overly specific personal traces.
-- Focus on durable workflow / judgment / system / engineering lessons.
-- End with an unresolved tension, not a neat conclusion.
-- Output markdown in this exact format:
+Markdown requirements:
 ---
 title: "..."
 date: ${DATE}
@@ -362,6 +303,13 @@ tags: ["reflection", "..."]
 
 [body]
 
+Content requirements:
+- Use first-person voice.
+- 500-900 words.
+- Remove private identifiers, handles, email addresses, and overly specific personal traces.
+- Focus on durable workflow / judgment / system / engineering lessons.
+- End with an unresolved tension, not a neat conclusion.
+
 Daily Review source:
 EOF
 cat "$SANITIZED_REVIEW" >> "$PROMPT_FILE"
@@ -369,7 +317,7 @@ cat "$SANITIZED_REVIEW" >> "$PROMPT_FILE"
 GENERATOR="antigravity"
 if ! antigravity_generate "$PROMPT_FILE" "$READ_JSON" "$RAW_HINTS" "$OUT_FILE"; then
   echo "antigravity generation failed after bounded wait; falling back to local direct generation"
-  notify "magma-blog 自动发布进入本地兜底（${DATE}）\n- Antigravity 在限定时间内未按约定写出指定产物。\n- 已开始切换到本地直接生成。"
+  notify "magma-blog 自动发布进入本地兜底（${DATE}）\n- Antigravity 在限定时间内未返回可提取的最终 markdown。\n- 已开始切换到本地直接生成。"
   if local_fallback_generate "$SANITIZED_REVIEW" "$OUT_FILE"; then
     GENERATOR="local-fallback"
   else
@@ -378,6 +326,7 @@ if ! antigravity_generate "$PROMPT_FILE" "$READ_JSON" "$RAW_HINTS" "$OUT_FILE"; 
 fi
 
 cp "$OUT_FILE" "$BLOG_FILE"
+cp "$OUT_FILE" "$TARGET_ARTIFACT"
 
 if ! grep -q '^title:' "$OUT_FILE" || ! grep -q '^date: ' "$OUT_FILE" || ! grep -q '^description:' "$OUT_FILE" || ! grep -q '^tags:' "$OUT_FILE"; then
   fail_and_notify "frontmatter validation failed"
@@ -396,8 +345,8 @@ cat > "$IMPROVEMENT_FILE" <<EOF
 PARTIAL
 
 ## Promoted Insights
-- TOOLS.md: When Antigravity exposes a concrete artifact path, prefer file-first retrieval over asking for a chat paste.
-- TOOLS.md: Reflection publishing benefits from a two-stage flow: deep draft first, then sanitization / compression / publish finalization.
+- TOOLS.md: Antigravity is more reliable as a markdown-returning draft surface than as a strict file-writing worker.
+- TOOLS.md: Reflection publishing benefits from a two-stage flow: deep draft first, then local extraction / sanitization / publish finalization.
 
 ## Rationale
 These are durable workflow improvements beyond a single review day.
@@ -410,10 +359,9 @@ EOF
 echo "building"
 npm run build || fail_and_notify "build failed"
 
-git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$SANITIZED_REVIEW" "$OUT_FILE"
+git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$SANITIZED_REVIEW" "$OUT_FILE" "$TARGET_ARTIFACT"
 [ -f "$READ_JSON" ] && git add "$READ_JSON"
 [ -f "$RAW_HINTS" ] && git add "$RAW_HINTS"
-[ -f "$TARGET_ARTIFACT" ] && git add "$TARGET_ARTIFACT"
 if git diff --cached --quiet; then
   echo "no staged diff after generation"
   exit 0
