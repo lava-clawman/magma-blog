@@ -151,14 +151,12 @@ try:
 except Exception:
     raise SystemExit(1)
 text = "\n".join(item.get("content", "") for item in data if isinstance(item, dict))
-# Prefer a full markdown doc with frontmatter.
-# Case 1: normal multi-line frontmatter already present.
+
 multi = re.search(r'---\s*\ntitle:\s*".*?"\s*\ndate:\s*' + re.escape(date) + r'\s*\ndescription:\s*".*?"\s*\ntags:\s*\[.*?\]\s*\n---\s*\n.*', text, re.S)
 if multi:
     out.write_text(multi.group(0).strip() + '\n')
     raise SystemExit(0)
 
-# Case 2: compressed frontmatter on one line, then body.
 flat = re.search(r'title:\s*"(?P<title>.*?)"\s+date:\s*(?P<date>\d{4}-\d{2}-\d{2})\s+description:\s*"(?P<desc>.*?)"\s+tags:\s*(?P<tags>\[.*?\])\s+(?P<body>.*)', text, re.S)
 if not flat:
     raise SystemExit(2)
@@ -190,7 +188,6 @@ antigravity_generate() {
   switch_model_if_needed || return 1
   run_opencli_step "opencli antigravity send" $OPENCLI_BIN antigravity send "$(cat "$prompt_file")" -f json >/dev/null 2>&1 || return 1
 
-  # Fast window: 60s. Prefer extracting final markdown from chat payload directly.
   for i in 1 2 3 4 5 6; do
     sleep 10
     if $OPENCLI_BIN antigravity read -f json > "$read_json" 2>/dev/null; then
@@ -202,7 +199,6 @@ antigravity_generate() {
     fi
   done
 
-  # Grace window: another 60s.
   for i in 1 2 3 4 5 6; do
     sleep 10
     if $OPENCLI_BIN antigravity read -f json > "$read_json" 2>/dev/null; then
@@ -266,6 +262,12 @@ fi
 if [ -f "$BLOG_FILE" ]; then
   echo "removing stale local blog file for retry: $BLOG_FILE"
   rm -f "$BLOG_FILE"
+fi
+
+# Preflight: clear only this date's untracked artifact residue so rebase can proceed.
+if [ -d "$ARTIFACT_DIR" ] && ! git ls-files --error-unmatch "$ARTIFACT_DIR" >/dev/null 2>&1; then
+  echo "cleaning untracked artifact residue before git sync: $ARTIFACT_DIR"
+  rm -rf "$ARTIFACT_DIR"
 fi
 
 echo "git sync preflight"
