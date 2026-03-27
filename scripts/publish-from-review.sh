@@ -25,8 +25,8 @@ FAIL_FLAG="$ARTIFACT_DIR/.failure-notified"
 SUCCESS_FLAG="$ARTIFACT_DIR/.success-notified"
 CHANNEL_TARGET="channel:1484517576985022545"
 MODEL_LABEL="Claude Opus 4.6 (Thinking)"
-ARTIFACT_NAME="reflection_post.md"
-TARGET_ARTIFACT="$ARTIFACT_DIR/$ARTIFACT_NAME"
+DRAFT_FILE="$ARTIFACT_DIR/antigravity-draft.md"
+FINAL_FILE="$ARTIFACT_DIR/final-reflection.md"
 
 notify() {
   local text="$1"
@@ -52,7 +52,7 @@ fail_and_notify() {
   echo "$reason"
   mkdir -p "$ARTIFACT_DIR"
   if [ ! -f "$FAIL_FLAG" ]; then
-    if notify "magma-blog 自动发布失败（${DATE}）\n- 原因：${reason}\n- 将在下个整点后每小时继续重试，直到成功。"; then
+    if notify "magma-blog 发布链失败（${DATE}）\n- 原因：${reason}\n- 本轮不会自动发布正式稿。"; then
       : > "$FAIL_FLAG"
       rm -f "$SUCCESS_FLAG"
       echo "failure notification sent"
@@ -64,7 +64,6 @@ fail_and_notify() {
 }
 
 restart_antigravity() {
-  echo "restarting controlled Antigravity instance"
   pkill -f "$ANTIGRAVITY_APP --remote-debugging-port=9224" || true
   pkill -f "$ANTIGRAVITY_APP" || true
   sleep 3
@@ -79,7 +78,6 @@ ensure_antigravity() {
   if [ ! -x "$ANTIGRAVITY_APP" ]; then
     return 1
   fi
-  echo "starting Antigravity CDP instance"
   "$ANTIGRAVITY_APP" --remote-debugging-port=9224 >/tmp/antigravity-opencli.log 2>&1 &
   sleep 8
   curl -fsS "$OPENCLI_CDP_ENDPOINT/json/version" >/dev/null 2>&1 || return 1
@@ -103,9 +101,7 @@ run_opencli_step() {
 
 current_model_is_target() {
   local model_read
-  if ! model_read="$($OPENCLI_BIN antigravity read -f json 2>/dev/null || true)"; then
-    return 1
-  fi
+  model_read="$($OPENCLI_BIN antigravity read -f json 2>/dev/null || true)"
   echo "$model_read" | grep -Fq "$MODEL_LABEL"
 }
 
@@ -114,30 +110,19 @@ switch_model_if_needed() {
     echo "model already on target: $MODEL_LABEL"
     return 0
   fi
-
   sleep 3
   if current_model_is_target; then
     echo "model already on target after settle: $MODEL_LABEL"
     return 0
   fi
-
   if run_opencli_step "opencli antigravity model switch" $OPENCLI_BIN antigravity model "$MODEL_LABEL" -f json >/dev/null 2>&1; then
     sleep 3
-    if current_model_is_target; then
-      echo "model switch confirmed: $MODEL_LABEL"
-      return 0
-    fi
+    current_model_is_target && return 0
   fi
-
-  if current_model_is_target; then
-    echo "model appears to be target despite switch instability: $MODEL_LABEL"
-    return 0
-  fi
-
-  return 1
+  current_model_is_target
 }
 
-extract_markdown_from_read_json() {
+extract_draft_from_read_json() {
   local read_json="$1"
   local out_file="$2"
   python3 - "$read_json" "$out_file" "$DATE" <<'PY'
@@ -151,13 +136,6 @@ try:
 except Exception:
     raise SystemExit(1)
 text = "\n".join(item.get("content", "") for item in data if isinstance(item, dict))
-
-multi = re.search(r'---\s*\ntitle:\s*".*?"\s*\ndate:\s*' + re.escape(date) + r'\s*\ndescription:\s*".*?"\s*\ntags:\s*\[.*?\]\s*\n---\s*\n.*', text, re.S)
-if multi:
-    out.write_text(multi.group(0).strip() + '\n')
-    raise SystemExit(0)
-
-# Prefer the last real title block, then reconstruct valid YAML even if frontmatter is flattened.
 title_iter = list(re.finditer(r'title:\s*"([^"]+)"', text))
 real_start = None
 for m in reversed(title_iter):
@@ -173,21 +151,12 @@ if not flat:
     raise SystemExit(2)
 body = flat.group('body')
 body = re.sub(r'\n(?:Thinking\.|Copy|Ask anything.*|Planning|Send)\s*$', '', body, flags=re.S).strip()
-# Normalize tags to YAML list for robustness.
-tag_values = [t.strip().strip('"').strip("'") for t in re.findall(r'"([^"]+)"', flat.group('tags'))]
-if not tag_values:
-    tag_values = ['reflection']
-tags_yaml = '\n'.join(f'  - {t}' for t in tag_values)
-# Escape double quotes in scalar strings.
-title = flat.group('title').replace('"', '\"').strip()
-desc = flat.group('desc').replace('"', '\"').strip()
 match = (
     '---\n'
-    f'title: "{title}"\n'
+    f'title: "{flat.group("title").strip()}"\n'
     f'date: {flat.group("date").strip()}\n'
-    f'description: "{desc}"\n'
-    'tags:\n'
-    f'{tags_yaml}\n'
+    f'description: "{flat.group("desc").strip()}"\n'
+    f'tags: {flat.group("tags").strip()}\n'
     '---\n\n'
     + body + '\n'
 )
@@ -195,66 +164,28 @@ out.write_text(match)
 PY
 }
 
-antigravity_generate() {
+antigravity_generate_draft() {
   local prompt_file="$1"
   local read_json="$2"
   local raw_hints="$3"
   local out_file="$4"
   local i
-
   ensure_antigravity || return 1
   run_opencli_step "opencli antigravity status" $OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || return 1
   run_opencli_step "opencli antigravity new" $OPENCLI_BIN antigravity new -f json >/dev/null 2>&1 || return 1
   switch_model_if_needed || return 1
   run_opencli_step "opencli antigravity send" $OPENCLI_BIN antigravity send "$(cat "$prompt_file")" -f json >/dev/null 2>&1 || return 1
-
-  for i in 1 2 3 4 5 6; do
+  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
     sleep 10
     if $OPENCLI_BIN antigravity read -f json > "$read_json" 2>/dev/null; then
       cp "$read_json" "$raw_hints"
-      if extract_markdown_from_read_json "$read_json" "$out_file"; then
-        echo "final markdown extracted from Antigravity read payload during fast window"
+      if extract_draft_from_read_json "$read_json" "$out_file"; then
+        echo "draft extracted from Antigravity read payload"
         return 0
       fi
     fi
   done
-
-  for i in 1 2 3 4 5 6; do
-    sleep 10
-    if $OPENCLI_BIN antigravity read -f json > "$read_json" 2>/dev/null; then
-      cp "$read_json" "$raw_hints"
-      if extract_markdown_from_read_json "$read_json" "$out_file"; then
-        echo "final markdown extracted from Antigravity read payload during grace window"
-        return 0
-      fi
-    fi
-  done
-
   return 1
-}
-
-local_fallback_generate() {
-  local review_file="$1"
-  local out_file="$2"
-  python3 - "$review_file" "$out_file" "$DATE" <<'PY'
-from pathlib import Path
-import sys
-review = Path(sys.argv[1]).read_text()
-out = Path(sys.argv[2])
-date = sys.argv[3]
-
-p1 = "Most of the day looked, on the surface, like ordinary maintenance: restart a service, resolve a merge conflict, clear a warning, move on. But the deeper pattern was less about any single task and more about how often systems lie in polite ways. A version string can say the right thing while the wrong process is still running. A successful local merge can still hide a broken delivery path. A diagnostic warning can sound urgent while pointing at a condition that is technically real but operationally irrelevant. I spent the day moving from the comfort of labels back toward the messier work of runtime verification."
-p2 = "The most useful lesson was that recovery is not the same as convergence. I saw one service return to a healthy-looking state only after separating the idea of updated code from the reality of an actually restarted process. That gap sounds obvious when written down, but in practice it is exactly where wasted effort accumulates. When a system has enough layers, it becomes easy to confuse declared state with effective state. The right habit is not more trust in dashboards, version outputs, or one-line checks. It is building a discipline of cross-checking what is running, what is bound to the port, and what is still lingering from a previous attempt."
-p3 = "A second theme was that tooling failure often hides in the edges, not the center. The visible blocker was a push that would not go through, but the real issue was not the code change itself. It was the credential model behind it: scopes, remotes, and assumptions about which identity was actually carrying the workflow. That kind of failure is easy to misclassify as bad luck because it appears after the real work is done. In reality, credential design is part of the product surface of any automation. If it can stop the last step, it belongs in the main path, not in the footnotes."
-p4 = "The day also exposed a different kind of mismatch: the distance between what a diagnostic tool warns about and what an operator should care about. A global warning can remain technically true while a group-level override is also functioning exactly as intended. That is not a trivial annoyance. It trains people either to overreact to noise or to ignore warnings that might later matter. The same thing happened in smaller form with local guardrails: a commit flow that blocked on unrelated ignored paths taught the operator to bypass the guardrail rather than trust it. Once a protective layer stops aligning with the real shape of risk, it starts teaching the wrong behavior."
-p5 = "What I am left with is not a clean moral about adding more checks. More checks created some of the confusion in the first place. The harder question is how to design abstractions that stay honest without forcing constant manual excavation underneath them. I still want interfaces that compress complexity. I also trust them less than I did yesterday. The tension is that every layer that makes a system easier to operate also creates one more place where the story can diverge from the truth."
-
-body = "\n\n".join([p1, p2, p3, p4, p5])
-frontmatter = f'''---\ntitle: "When Operational Signals Stop Matching Reality"\ndate: {date}\ndescription: "A day of recovery work turned into a sharper lesson about runtime truth, fragile guardrails, and why operational abstractions become dangerous when they drift from actual system behavior."\ntags: ["reflection", "operations", "automation", "systems", "debugging"]\n---\n\n'''
-out.write_text(frontmatter + body + "\n")
-PY
-  [ -s "$out_file" ] || return 1
-  return 0
 }
 
 exec >>"$LOG_FILE" 2>&1
@@ -279,12 +210,7 @@ if git ls-files --error-unmatch "$BLOG_FILE" >/dev/null 2>&1; then
   echo "blog already tracked for $DATE, skipping"
   exit 0
 fi
-if [ -f "$BLOG_FILE" ]; then
-  echo "removing stale local blog file for retry: $BLOG_FILE"
-  rm -f "$BLOG_FILE"
-fi
 
-# Preflight: clear only this date's untracked artifact residue so rebase can proceed.
 if [ -d "$ARTIFACT_DIR" ] && ! git ls-files --error-unmatch "$ARTIFACT_DIR" >/dev/null 2>&1; then
   echo "cleaning untracked artifact residue before git sync: $ARTIFACT_DIR"
   rm -rf "$ARTIFACT_DIR"
@@ -307,20 +233,18 @@ PY
 
 PROMPT_FILE="$ARTIFACT_DIR/antigravity-prompt.txt"
 READ_JSON="$ARTIFACT_DIR/antigravity-read.json"
-OUT_FILE="$ARTIFACT_DIR/antigravity-output.md"
 RAW_HINTS="$ARTIFACT_DIR/antigravity-hints.txt"
-rm -f "$READ_JSON" "$OUT_FILE" "$RAW_HINTS" "$TARGET_ARTIFACT"
+rm -f "$READ_JSON" "$RAW_HINTS" "$DRAFT_FILE"
 
 cat > "$PROMPT_FILE" <<EOF
-Write a PUBLIC reflection blog post from the daily review below.
+Write a PUBLIC reflection blog post draft from the daily review below.
 
 HARD OUTPUT CONTRACT:
-- Return the FINAL publishable markdown document directly in the chat response.
+- Return a SINGLE complete markdown draft directly in chat.
 - Do NOT ask follow-up questions.
-- Do NOT describe what you plan to write.
 - Do NOT say you created a file.
-- Do NOT return status text like "Created Reflection Post".
-- Output ONLY the final markdown document.
+- Do NOT include planning/status text on purpose.
+- The draft may include frontmatter and body.
 
 Markdown requirements:
 ---
@@ -343,22 +267,21 @@ Daily Review source:
 EOF
 cat "$SANITIZED_REVIEW" >> "$PROMPT_FILE"
 
-GENERATOR="antigravity"
-if ! antigravity_generate "$PROMPT_FILE" "$READ_JSON" "$RAW_HINTS" "$OUT_FILE"; then
-  echo "antigravity generation failed after bounded wait; falling back to local direct generation"
-  notify "magma-blog 自动发布进入本地兜底（${DATE}）\n- Antigravity 在限定时间内未返回可提取的最终 markdown。\n- 已开始切换到本地直接生成。"
-  if local_fallback_generate "$SANITIZED_REVIEW" "$OUT_FILE"; then
-    GENERATOR="local-fallback"
-  else
-    fail_and_notify "antigravity failed and local fallback also failed"
-  fi
+if antigravity_generate_draft "$PROMPT_FILE" "$READ_JSON" "$RAW_HINTS" "$DRAFT_FILE"; then
+  notify "magma-blog 草稿已生成（${DATE}）\n- Antigravity draft 已保存到 artifacts/${DATE}/antigravity-draft.md\n- 正式发布前需要我人工定稿。"
+else
+  fail_and_notify "antigravity draft generation failed"
 fi
 
-cp "$OUT_FILE" "$BLOG_FILE"
-cp "$OUT_FILE" "$TARGET_ARTIFACT"
+if [ ! -f "$FINAL_FILE" ]; then
+  echo "final reflection missing; stopping before publish: $FINAL_FILE"
+  exit 0
+fi
 
-if ! grep -q '^title:' "$OUT_FILE" || ! grep -q '^date: ' "$OUT_FILE" || ! grep -q '^description:' "$OUT_FILE" || ! grep -q '^tags:' "$OUT_FILE"; then
-  fail_and_notify "frontmatter validation failed"
+cp "$FINAL_FILE" "$BLOG_FILE"
+
+if ! grep -q '^title:' "$FINAL_FILE" || ! grep -q '^date: ' "$FINAL_FILE" || ! grep -q '^description:' "$FINAL_FILE" || ! grep -q '^tags:' "$FINAL_FILE"; then
+  fail_and_notify "final reflection frontmatter validation failed"
 fi
 
 echo "running privacy check"
@@ -374,21 +297,22 @@ cat > "$IMPROVEMENT_FILE" <<EOF
 PARTIAL
 
 ## Promoted Insights
-- TOOLS.md: Antigravity is more reliable as a markdown-returning draft surface than as a strict file-writing worker.
-- TOOLS.md: Reflection publishing benefits from a two-stage flow: deep draft first, then local extraction / sanitization / publish finalization.
+- TOOLS.md: Antigravity is a draft source, not the final publication authority.
+- TOOLS.md: Final publishable reflection content must be human-authored / human-finalized before scripted release.
 
 ## Rationale
-These are durable workflow improvements beyond a single review day.
+Content quality and publication hygiene require a human final pass; scripted release should handle deterministic operations only.
 
 ## Trace
 - Source: $REVIEW_FILE
-- Generator: $GENERATOR
+- Draft: $DRAFT_FILE
+- Final: $FINAL_FILE
 EOF
 
 echo "building"
 npm run build || fail_and_notify "build failed"
 
-git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$SANITIZED_REVIEW" "$OUT_FILE" "$TARGET_ARTIFACT"
+git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$SANITIZED_REVIEW" "$DRAFT_FILE" "$FINAL_FILE"
 [ -f "$READ_JSON" ] && git add "$READ_JSON"
 [ -f "$RAW_HINTS" ] && git add "$RAW_HINTS"
 if git diff --cached --quiet; then
@@ -401,7 +325,7 @@ git push origin HEAD || fail_and_notify "git push failed"
 
 rm -f "$FAIL_FLAG"
 if [ ! -f "$SUCCESS_FLAG" ]; then
-  if notify "magma-blog 自动发布已恢复（${DATE}）\n- 状态：发布成功\n- 生成路径：${GENERATOR}\n- 后续同日期不会再重试。"; then
+  if notify "magma-blog 自动发布已完成（${DATE}）\n- 状态：正式稿已发布\n- 流程：人工定稿 + 脚本发布\n- 后续同日期不会再重试。"; then
     : > "$SUCCESS_FLAG"
     echo "success notification sent"
   else
