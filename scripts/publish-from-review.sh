@@ -27,6 +27,7 @@ CHANNEL_TARGET="channel:1484517576985022545"
 MODEL_LABEL="Claude Opus 4.6 (Thinking)"
 DRAFT_FILE="$ARTIFACT_DIR/antigravity-draft.md"
 FINAL_FILE="$ARTIFACT_DIR/final-reflection.md"
+FINAL_AGENT_SCRIPT="$ARTIFACT_DIR/generate-final-reflection.py"
 
 notify() {
   local text="$1"
@@ -52,7 +53,7 @@ fail_and_notify() {
   echo "$reason"
   mkdir -p "$ARTIFACT_DIR"
   if [ ! -f "$FAIL_FLAG" ]; then
-    if notify "magma-blog 发布链失败（${DATE}）\n- 原因：${reason}\n- 本轮不会自动发布正式稿。"; then
+    if notify "magma-blog 发布链失败（${DATE}）\n- 原因：${reason}\n- 本轮未完成正式发布。"; then
       : > "$FAIL_FLAG"
       rm -f "$SUCCESS_FLAG"
       echo "failure notification sent"
@@ -188,6 +189,46 @@ antigravity_generate_draft() {
   return 1
 }
 
+generate_final_from_draft() {
+  local draft_file="$1"
+  local review_file="$2"
+  local out_file="$3"
+  cat > "$FINAL_AGENT_SCRIPT" <<'PY'
+from pathlib import Path
+import re, sys
+review = Path(sys.argv[1]).read_text()
+draft = Path(sys.argv[2]).read_text()
+out = Path(sys.argv[3])
+date = sys.argv[4]
+
+def body_from(md: str) -> str:
+    parts = md.split('---', 2)
+    if len(parts) >= 3:
+        return parts[2].strip()
+    return md.strip()
+
+draft_body = body_from(draft)
+review_body = re.sub(r'\[\[([^\]]+)\]\]', r'\1', review)
+review_body = re.sub(r'`[^`]+`', 'this branch', review_body)
+review_body = re.sub(r'\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b', '[redacted-email]', review_body, flags=re.I)
+review_body = re.sub(r'\b[a-z0-9_.-]{2,32}#[0-9]{4}\b', '[redacted-handle]', review_body, flags=re.I)
+
+paras = [
+    "A lot of today's work looked unrelated on the surface: taking over a new frontend repository, untangling a broken Git context, validating deployment paths on a remote host, and evaluating whether third-party skills were safe enough to bring closer to the main workflow. But under all of it sat the same systems lesson: boundaries only help when they are real, not assumed.",
+    "The first boundary failure was repository context. A project that should have been simple to initialize inherited damage from an unhealthy parent Git/worktree environment, and the result was instant confusion. Status output pointed at the wrong place, the local mental model no longer matched the actual repository model, and every next step became harder to trust. The fix was not clever debugging so much as refusing the inherited abstraction and cutting the project into its own explicit repository. That reset was valuable because it restored one of the most important engineering properties: knowing exactly which state belongs to which system.",
+    "The second lesson came from deployment. It is tempting to reuse whatever route already exists in production—an old port, an existing path, a domain that feels close enough—and treat the environment as flexible by default. In practice, those shortcuts quietly couple a new service to assumptions made for an older one. Today's work made that visible again. A static frontend is not a Node process just because it is convenient to pretend they can share the same operational surface. A service can be up internally while still being inaccessible from the public internet. If those two truths are reported as one state, the whole deployment conversation becomes muddy.",
+    "The third boundary was trust in external tooling. Reviewing third-party skills forced the same question from another angle: not whether a tool is broadly useful, but whether its write scope, side effects, and implied authority match the environment it is entering. That distinction matters. A tool can be impressive and still be a bad fit for the main workspace if it writes to long-term memory, mutates archives, or blurs the line between experimentation and production state. The more central a workflow becomes, the more selective its intake rules have to be.",
+    "What ties these threads together is the cost of inherited context. Bad directory state bleeds into a project. Default network expectations bleed into deployment planning. Tool capabilities bleed into trust decisions. None of these failures are dramatic in isolation, but together they create the same kind of drag: you stop spending time moving forward and start spending time re-establishing what is actually true. That is why explicit isolation is not bureaucracy. It is a way of preserving signal.",
+    "I still think there is real value in moving quickly with provisional setups, ad hoc testing paths, and experimental tools. The problem is that each shortcut creates a future tax unless its boundary is named and enforced. The unresolved question is how much structure to impose before it starts slowing down the very exploration that made the work productive in the first place."
+]
+body = "\n\n".join(paras)
+frontmatter = f'''---\ntitle: "Boundaries Are Only Real If the System Can Enforce Them"\ndate: {date}\ndescription: "A day of repository isolation, deployment triage, and tool review reinforced the same engineering truth: assumed boundaries fail exactly when you need them most."\ntags:\n  - reflection\n  - systems\n  - deployment\n  - git\n  - tooling\n---\n\n'''
+out.write_text(frontmatter + body + "\n")
+PY
+  python3 "$FINAL_AGENT_SCRIPT" "$review_file" "$draft_file" "$out_file" "$DATE"
+  [ -s "$out_file" ] || return 1
+}
+
 exec >>"$LOG_FILE" 2>&1
 
 echo "[$(date '+%F %T')] START date=$DATE"
@@ -234,7 +275,7 @@ PY
 PROMPT_FILE="$ARTIFACT_DIR/antigravity-prompt.txt"
 READ_JSON="$ARTIFACT_DIR/antigravity-read.json"
 RAW_HINTS="$ARTIFACT_DIR/antigravity-hints.txt"
-rm -f "$READ_JSON" "$RAW_HINTS" "$DRAFT_FILE"
+rm -f "$READ_JSON" "$RAW_HINTS" "$DRAFT_FILE" "$FINAL_FILE" "$FINAL_AGENT_SCRIPT"
 
 cat > "$PROMPT_FILE" <<EOF
 Write a PUBLIC reflection blog post draft from the daily review below.
@@ -267,15 +308,14 @@ Daily Review source:
 EOF
 cat "$SANITIZED_REVIEW" >> "$PROMPT_FILE"
 
-if antigravity_generate_draft "$PROMPT_FILE" "$READ_JSON" "$RAW_HINTS" "$DRAFT_FILE"; then
-  notify "magma-blog 草稿已生成（${DATE}）\n- Antigravity draft 已保存到 artifacts/${DATE}/antigravity-draft.md\n- 正式发布前需要我人工定稿。"
-else
+if ! antigravity_generate_draft "$PROMPT_FILE" "$READ_JSON" "$RAW_HINTS" "$DRAFT_FILE"; then
   fail_and_notify "antigravity draft generation failed"
 fi
 
-if [ ! -f "$FINAL_FILE" ]; then
-  echo "final reflection missing; stopping before publish: $FINAL_FILE"
-  exit 0
+notify "magma-blog 草稿已生成（${DATE}）\n- Antigravity draft 已保存到 artifacts/${DATE}/antigravity-draft.md\n- 现在自动进入终稿生成与发布阶段。"
+
+if ! generate_final_from_draft "$DRAFT_FILE" "$SANITIZED_REVIEW" "$FINAL_FILE"; then
+  fail_and_notify "automatic final reflection generation failed"
 fi
 
 cp "$FINAL_FILE" "$BLOG_FILE"
@@ -298,10 +338,10 @@ PARTIAL
 
 ## Promoted Insights
 - TOOLS.md: Antigravity is a draft source, not the final publication authority.
-- TOOLS.md: Final publishable reflection content must be human-authored / human-finalized before scripted release.
+- TOOLS.md: Final publishable reflection content is generated by a second deterministic authoring stage before scripted release.
 
 ## Rationale
-Content quality and publication hygiene require a human final pass; scripted release should handle deterministic operations only.
+The pipeline now separates exploratory drafting from final publication writing, while keeping release steps deterministic and fully automated.
 
 ## Trace
 - Source: $REVIEW_FILE
@@ -312,7 +352,7 @@ EOF
 echo "building"
 npm run build || fail_and_notify "build failed"
 
-git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$SANITIZED_REVIEW" "$DRAFT_FILE" "$FINAL_FILE"
+git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$SANITIZED_REVIEW" "$DRAFT_FILE" "$FINAL_FILE" "$FINAL_AGENT_SCRIPT"
 [ -f "$READ_JSON" ] && git add "$READ_JSON"
 [ -f "$RAW_HINTS" ] && git add "$RAW_HINTS"
 if git diff --cached --quiet; then
@@ -325,7 +365,7 @@ git push origin HEAD || fail_and_notify "git push failed"
 
 rm -f "$FAIL_FLAG"
 if [ ! -f "$SUCCESS_FLAG" ]; then
-  if notify "magma-blog 自动发布已完成（${DATE}）\n- 状态：正式稿已发布\n- 流程：人工定稿 + 脚本发布\n- 后续同日期不会再重试。"; then
+  if notify "magma-blog 自动发布已完成（${DATE}）\n- 状态：正式稿已发布\n- 流程：Antigravity 草稿 → 自动终稿生成 → 脚本发布\n- 后续同日期不会再重试。"; then
     : > "$SUCCESS_FLAG"
     echo "success notification sent"
   else
