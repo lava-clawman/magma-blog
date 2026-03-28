@@ -18,18 +18,13 @@ DATE="${1:-$(date -v-1d +%F)}"
 REVIEW_FILE="$REVIEWS_DIR/Daily-Review-${DATE}.md"
 BLOG_FILE="$REPO/src/content/blog/${DATE}-reflection.md"
 ARTIFACT_DIR="$REPO/artifacts/${DATE}"
-IMPROVEMENT_FILE="$ARTIFACT_DIR/improvement-decision.md"
 LOG_FILE="$LOG_DIR/publish-${DATE}.log"
 LOCK_FILE="$LOCK_DIR/publish-${DATE}.lock"
 FAIL_FLAG="$ARTIFACT_DIR/.failure-notified"
-SUCCESS_FLAG="$ARTIFACT_DIR/.success-notified"
+DRAFT_READY_FLAG="$ARTIFACT_DIR/draft-ready.json"
 CHANNEL_TARGET="channel:1484517576985022545"
 MODEL_LABEL="Claude Opus 4.6 (Thinking)"
 DRAFT_FILE="$ARTIFACT_DIR/antigravity-draft.md"
-FINAL_FILE="$ARTIFACT_DIR/final-reflection.md"
-FINAL_AGENT_RESULT="$ARTIFACT_DIR/final-agent-result.txt"
-FINAL_AGENT_PROMPT="$ARTIFACT_DIR/final-agent-prompt.txt"
-FINAL_AGENT_ID="worker-general"
 
 notify() {
   local text="$1"
@@ -55,9 +50,8 @@ fail_and_notify() {
   echo "$reason"
   mkdir -p "$ARTIFACT_DIR"
   if [ ! -f "$FAIL_FLAG" ]; then
-    if notify "magma-blog 发布链失败（${DATE}）\n- 原因：${reason}\n- 本轮未完成正式发布。"; then
+    if notify "magma-blog 草稿阶段失败（${DATE}）\n- 原因：${reason}\n- 尚未进入终稿与发布阶段。"; then
       : > "$FAIL_FLAG"
-      rm -f "$SUCCESS_FLAG"
       echo "failure notification sent"
     else
       echo "failure notification failed"
@@ -191,67 +185,6 @@ antigravity_generate_draft() {
   return 1
 }
 
-generate_final_via_subagent() {
-  local review_file="$1"
-  local draft_file="$2"
-  local out_file="$3"
-  cat > "$FINAL_AGENT_PROMPT" <<EOF
-You are writing the FINAL publishable reflection article.
-
-Inputs:
-- Review file: $review_file
-- Antigravity draft file: $draft_file
-- Output file you must write: $out_file
-- Date: $DATE
-
-Requirements:
-- Read both input files.
-- The Antigravity draft is only a rough draft; improve structure, clarity, and precision.
-- Produce a clean final article for publication, not notes about the process.
-- Use first-person voice.
-- 500-900 words.
-- Remove private identifiers, handles, email addresses, and overly specific personal traces.
-- Focus on durable workflow / judgment / system / engineering lessons.
-- End with an unresolved tension, not a neat conclusion.
-- Write valid markdown with valid YAML frontmatter in this exact shape:
----
-title: "..."
-date: $DATE
-description: "..."
-tags:
-  - reflection
-  - ...
----
-
-[body]
-
-Do not print the article to stdout. Write it to $out_file and then print exactly one line:
-FINAL_WRITTEN
-EOF
-  python3 - "$REPO" "$FINAL_AGENT_PROMPT" "$FINAL_AGENT_RESULT" <<'PY'
-from pathlib import Path
-import subprocess, sys
-repo = Path(sys.argv[1])
-prompt_file = Path(sys.argv[2])
-result_file = Path(sys.argv[3])
-prompt = prompt_file.read_text()
-cmd = [
-    '/Users/lab/.local/bin/openclaw',
-    'sessions', 'spawn',
-    '--runtime', 'subagent',
-    '--agent', 'worker-general',
-    '--mode', 'run',
-    '--cwd', str(repo),
-    '--task', prompt,
-]
-p = subprocess.run(cmd, capture_output=True, text=True)
-result_file.write_text((p.stdout or '') + '\n' + (p.stderr or ''))
-raise SystemExit(p.returncode)
-PY
-  grep -q 'FINAL_WRITTEN' "$FINAL_AGENT_RESULT" || return 1
-  [ -s "$out_file" ] || return 1
-}
-
 exec >>"$LOG_FILE" 2>&1
 
 echo "[$(date '+%F %T')] START date=$DATE"
@@ -298,7 +231,7 @@ PY
 PROMPT_FILE="$ARTIFACT_DIR/antigravity-prompt.txt"
 READ_JSON="$ARTIFACT_DIR/antigravity-read.json"
 RAW_HINTS="$ARTIFACT_DIR/antigravity-hints.txt"
-rm -f "$READ_JSON" "$RAW_HINTS" "$DRAFT_FILE" "$FINAL_FILE" "$FINAL_AGENT_RESULT" "$FINAL_AGENT_PROMPT"
+rm -f "$READ_JSON" "$RAW_HINTS" "$DRAFT_FILE" "$DRAFT_READY_FLAG"
 
 cat > "$PROMPT_FILE" <<EOF
 Write a PUBLIC reflection blog post draft from the daily review below.
@@ -335,66 +268,18 @@ if ! antigravity_generate_draft "$PROMPT_FILE" "$READ_JSON" "$RAW_HINTS" "$DRAFT
   fail_and_notify "antigravity draft generation failed"
 fi
 
-notify "magma-blog 草稿已生成（${DATE}）\n- Antigravity draft 已保存到 artifacts/${DATE}/antigravity-draft.md\n- 现在自动触发智能体终稿生成。"
+python3 - "$DATE" "$DRAFT_FILE" "$SANITIZED_REVIEW" "$DRAFT_READY_FLAG" <<'PY'
+import json, sys
+from pathlib import Path
+date, draft_file, review_file, out = sys.argv[1:5]
+Path(out).write_text(json.dumps({
+  'date': date,
+  'draft_file': draft_file,
+  'review_file': review_file,
+  'status': 'draft_ready'
+}, indent=2) + '\n')
+PY
 
-if ! generate_final_via_subagent "$SANITIZED_REVIEW" "$DRAFT_FILE" "$FINAL_FILE"; then
-  fail_and_notify "subagent final reflection generation failed"
-fi
+notify "magma-blog 草稿已生成（${DATE}）\n- Draft: artifacts/${DATE}/antigravity-draft.md\n- 已写入 draft-ready.json，等待 agent 编排层接手终稿与发布。"
 
-cp "$FINAL_FILE" "$BLOG_FILE"
-
-if ! grep -q '^title:' "$FINAL_FILE" || ! grep -q '^date: ' "$FINAL_FILE" || ! grep -q '^description:' "$FINAL_FILE" || ! grep -q '^tags:' "$FINAL_FILE"; then
-  fail_and_notify "final reflection frontmatter validation failed"
-fi
-
-echo "running privacy check"
-if ! node scripts/privacy-check.mjs "$BLOG_FILE"; then
-  fail_and_notify "privacy check failed"
-fi
-
-echo "writing improvement decision"
-cat > "$IMPROVEMENT_FILE" <<EOF
-# Improvement Decision
-
-## Verdict
-PARTIAL
-
-## Promoted Insights
-- TOOLS.md: Antigravity is a draft source, not the final publication authority.
-- TOOLS.md: Final publishable reflection content is generated by a second intelligent authoring stage before scripted release.
-
-## Rationale
-The pipeline now separates exploratory drafting from final publication writing, while keeping release steps deterministic and fully automated.
-
-## Trace
-- Source: $REVIEW_FILE
-- Draft: $DRAFT_FILE
-- Final: $FINAL_FILE
-- Final agent: $FINAL_AGENT_ID
-EOF
-
-echo "building"
-npm run build || fail_and_notify "build failed"
-
-git add "$BLOG_FILE" "$IMPROVEMENT_FILE" "$ARTIFACT_DIR/source-review.md" "$SANITIZED_REVIEW" "$DRAFT_FILE" "$FINAL_FILE" "$FINAL_AGENT_PROMPT" "$FINAL_AGENT_RESULT"
-[ -f "$READ_JSON" ] && git add "$READ_JSON"
-[ -f "$RAW_HINTS" ] && git add "$RAW_HINTS"
-if git diff --cached --quiet; then
-  echo "no staged diff after generation"
-  exit 0
-fi
-
-git commit -m "feat: publish ${DATE} reflection" || fail_and_notify "git commit failed"
-git push origin HEAD || fail_and_notify "git push failed"
-
-rm -f "$FAIL_FLAG"
-if [ ! -f "$SUCCESS_FLAG" ]; then
-  if notify "magma-blog 自动发布已完成（${DATE}）\n- 状态：正式稿已发布\n- 流程：Antigravity 草稿 → subagent 终稿生成 → 脚本发布\n- 后续同日期不会再重试。"; then
-    : > "$SUCCESS_FLAG"
-    echo "success notification sent"
-  else
-    echo "success notification failed"
-  fi
-fi
-
-echo "[$(date '+%F %T')] DONE date=$DATE"
+echo "draft stage complete; stopping for agent orchestration layer"
