@@ -77,7 +77,10 @@ ensure_antigravity() {
   fi
   "$ANTIGRAVITY_APP" --remote-debugging-port=9224 >/tmp/antigravity-opencli.log 2>&1 &
   sleep 8
-  curl -fsS "$OPENCLI_CDP_ENDPOINT/json/version" >/dev/null 2>&1 || return 1
+  if curl -fsS "$OPENCLI_CDP_ENDPOINT/json/version" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
 }
 
 run_opencli_step() {
