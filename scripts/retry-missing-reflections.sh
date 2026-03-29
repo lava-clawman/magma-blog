@@ -1,29 +1,58 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
+PATH=/Users/lab/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 HOME=/Users/lab
 REPO="$HOME/Flash-Claude/projects/magma-blog"
 REVIEWS_DIR="$HOME/Flash-Claude/FlashNotes/reviews"
+ORCH="$REPO/scripts/orchestrate-reflection-finalization.py"
+LOCK_DIR="$REPO/.locks"
+mkdir -p "$LOCK_DIR"
+
+run_publish_stage() {
+  local date="$1"
+  local review_file="$REVIEWS_DIR/Daily-Review-${date}.md"
+  local blog_file="$REPO/src/content/blog/${date}-reflection.md"
+  local artifact_dir="$REPO/artifacts/${date}"
+  local draft_ready="$artifact_dir/draft-ready.json"
+  local final_file="$artifact_dir/final-reflection.md"
+  local success_flag="$artifact_dir/.success-notified"
+  local stage_lock="$LOCK_DIR/retry-${date}.lock"
+
+  if [ ! -f "$review_file" ]; then
+    return 0
+  fi
+
+  if [ -f "$success_flag" ] || [ -f "$blog_file" ]; then
+    return 0
+  fi
+
+  if [ -e "$stage_lock" ]; then
+    echo "retry lock exists for $date, skipping"
+    return 0
+  fi
+  trap 'rm -f "$stage_lock"' RETURN
+  : > "$stage_lock"
+
+  if [ -f "$final_file" ]; then
+    /usr/bin/python3 "$ORCH" "$date" || true
+    return 0
+  fi
+
+  if [ -f "$draft_ready" ]; then
+    /usr/bin/python3 "$ORCH" "$date" || true
+    return 0
+  fi
+
+  "$REPO/scripts/publish-from-review.sh" "$date" || true
+}
 
 HOUR="$(date +%H)"
 
-# Yesterday's reflection should not retry before the main 06:30 publish window has had a chance to run.
 if [ "$HOUR" -ge 7 ]; then
-  DATE="$(date -v-1d +%F)"
-  REVIEW_FILE="$REVIEWS_DIR/Daily-Review-${DATE}.md"
-  BLOG_FILE="$REPO/src/content/blog/${DATE}-reflection.md"
-  if [ -f "$REVIEW_FILE" ] && [ ! -f "$BLOG_FILE" ]; then
-    "$REPO/scripts/publish-from-review.sh" "$DATE" || true
-  fi
+  run_publish_stage "$(date -v-1d +%F)"
 fi
 
-# Older backfill retries are always allowed.
 for offset in 2 3; do
-  DATE="$(date -v-${offset}d +%F)"
-  REVIEW_FILE="$REVIEWS_DIR/Daily-Review-${DATE}.md"
-  BLOG_FILE="$REPO/src/content/blog/${DATE}-reflection.md"
-  if [ -f "$REVIEW_FILE" ] && [ ! -f "$BLOG_FILE" ]; then
-    "$REPO/scripts/publish-from-review.sh" "$DATE" || true
-  fi
+  run_publish_stage "$(date -v-${offset}d +%F)"
 done
