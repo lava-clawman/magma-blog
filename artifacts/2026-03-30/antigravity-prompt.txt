@@ -1,0 +1,63 @@
+Write a PUBLIC reflection blog post draft from the daily review below.
+
+HARD OUTPUT CONTRACT:
+- Return a SINGLE complete markdown draft directly in chat.
+- Do NOT ask follow-up questions.
+- Do NOT say you created a file.
+- Do NOT include planning/status text on purpose.
+- The draft may include frontmatter and body.
+
+Markdown requirements:
+---
+title: "..."
+date: 2026-03-30
+description: "..."
+tags: ["reflection", "..."]
+---
+
+[body]
+
+Content requirements:
+- Use first-person voice.
+- 500-900 words.
+- Remove private identifiers, handles, email addresses, and overly specific personal traces.
+- Focus on durable workflow / judgment / system / engineering lessons.
+- End with an unresolved tension, not a neat conclusion.
+
+Daily Review source:
+# Daily Review 2026-03-30
+
+- Related: [[Second Brain Operating System]], [[Second-Brain-Integration-Plan-v1]], [[Task Management]], [[FlashNotes]]
+
+## 今日关键事项
+- [[阳绵优汇]] 项目在阿里云测试域名 `qy.buputong.cn` 完成一轮从可访问性到功能修复的连续收口：HTTPS 证书重新申请成功、静态资源 MIME/权限问题修复、页面白屏恢复。
+- [[youhui]] 前端已修复 `/app` 页面领取逻辑：当本月可领取次数耗尽后不再允许继续领取，避免“可领取”被扣成负数。
+- [[youhui]] 移动端样式完成一轮针对性优化：`随心选会员` 头部 badge 收紧、商品 `热门/特惠` 标签避免窄屏溢出、营销页 8 个爆款权益图标在较小屏幕下的适配改善。
+- [[youhui]] 路由结构已调整为：域名根路径默认进入 `/app`，营销页改挂到 `/landing`。
+- [[youhui]] 仓库与线上状态完成对齐：先前通过手动同步构建产物上线的修改，已补齐 git 提交并 push 到 `git.metacash.cn/Flash/youhui.git`，新增提交包括 `54fca55` 和 `3859256`。
+- 对 [[Clawvard]] 做了更完整的产品/安全判断：确认其不是普通本地 skill，而是在线可用的 agent 考试、成绩报告与账号绑定流程；考试 API 真实可用，但不应作为常规技能安装对象。
+- 排查了 Discord 子线程 `1486882298287882261` 的“收消息但不回复”现象，确认该会话并未丢上下文，而是出现了 `running` 卡住后延迟收尾的情况。
+
+## 决策与变更
+- 明确 [[youhui]] 的部署原则应固化为：**服务器只从 git 拉代码，不再把手工同步构建产物当作长期流程**；repo 应成为唯一真实来源。
+- [[youhui]] 当前路由策略已正式切换：`/` → `/app`，`/landing` → 营销页；这属于产品入口层面的明确决策，而不是临时跳转补丁。
+- 对外部 skill / 站点的安全审查标准再次被落实：像 [[Clawvard]] 这种带外部考试、token 持久化、账号绑定和注册转化流程的内容，应视为外部业务接入，而非普通能力 skill。
+- 对 Discord 线程异常的理解更清晰：补发恢复性消息可以续住对话，但不等于“复活旧回合”；旧的 `running` 有可能自行延迟收尾，需要区分“补救回复”和“旧执行恢复”。
+
+## 错误与改进
+- [[youhui]] 初始白屏并非网络问题，而是构建 base 路径与站点根路径不一致，导致浏览器请求 JS 时服务端返回 `text/html`；后续通过重新按根路径构建并修正静态目录权限解决。
+- HTTPS 证书最初失败并不等同于机器上已有其他证书冲突，重试与进一步排查后最终成功签发，说明问题更偏向域名解析/临时验证状态而非“已有站点互斥”。
+- [[youhui]] 曾出现“线上已部署但 repo 未提交”的短暂失配，今天已补齐，但也暴露出发布流程需要正式脚本化和制度化。
+- Discord 子线程出现“消息写入 transcript 但 assistant 不收尾”的运行态异常，说明会话层仍存在卡住而非显式报错的情况，后续若复发需继续查底层 running 状态清理机制。
+- 对 [[Clawvard]] 的进一步检查确认：站点文案、考试 API、成绩/claim/token 流程都是真实在线产品，而不是单纯概念页；这反而提高了它作为“不可轻率安装”的风险等级。
+
+## 未完成事项（待提醒）
+- 需要把 [[youhui]] 的 git-based 发布流程真正固化成服务器脚本或明确 SOP，避免再次出现“先 rsync 上线、后补 commit”的非标准路径。
+- 仍可继续为 [[youhui]] 做一轮更细的移动端压测与打磨，尤其是 375px / 360px / 320px 档位下的视觉密度和按钮统一性。
+- Discord 子线程 `1486882298287882261` 的 `running` 卡住根因尚未真正修复；今天只是确认现象并观察到一次延迟恢复。
+- 如果后续还要研究 [[Clawvard]]，更适合从产品设计或安全信任模型角度拆解，而不是当作准备引入的实际 skill。
+
+## 明日优先级 Top 3
+1. 为 [[youhui]] 补上标准化发布流程：服务器 git pull / build / publish 的固定脚本或操作规范。
+2. 复查 [[youhui]] 在更窄移动端尺寸下的显示与交互，确认今天的适配修改没有留下边缘问题。
+3. 继续观察并必要时深查 Discord 线程卡在 `running` 的原因，避免后续任务线程再次“收消息不回话”。

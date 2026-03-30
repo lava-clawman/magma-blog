@@ -66,11 +66,12 @@ def main() -> int:
             return 1
 
         if not final_file.exists():
-            task = f'''In the current working directory, read {review_file} and {draft_file}, then write a clean final article to {final_file} with valid YAML frontmatter for date {date}.\n\nRequirements:\n- The Antigravity draft is only a rough draft; improve structure, clarity, and precision.\n- Produce a clean final article for publication, not notes about the process.\n- Use first-person voice.\n- 500-900 words.\n- Remove private identifiers, handles, email addresses, and overly specific personal traces.\n- Focus on durable workflow / judgment / system / engineering lessons.\n- End with an unresolved tension, not a neat conclusion.\n- Write valid markdown with valid YAML frontmatter in this exact shape:\n---\ntitle: \"...\"\ndate: {date}\ndescription: \"...\"\ntags:\n  - reflection\n  - ...\n---\n\n[body]\n\nDo not send extra commentary. After writing the file, reply with exactly FINAL_WRITTEN.\n'''
+            task = f'''In the current working directory, read {review_file} and {draft_file}. CRITICAL: You MUST use the `write` tool to save a clean final article directly to the file {final_file} with valid YAML frontmatter for date {date}.\n\nRequirements:\n- The Antigravity draft is only a rough draft; improve structure, clarity, and precision.\n- Produce a clean final article for publication, not notes about the process.\n- Use first-person voice.\n- 500-900 words.\n- Remove private identifiers, handles, email addresses, and overly specific personal traces.\n- Focus on durable workflow / judgment / system / engineering lessons.\n- End with an unresolved tension, not a neat conclusion.\n- Write valid markdown with valid YAML frontmatter in this exact shape:\n---\ntitle: \"...\"\ndate: {date}\ndescription: \"...\"\ntags:\n  - reflection\n  - ...\n---\n\n[body]\n\nCRITICAL RULE: Do NOT output the article text in your chat response. You must use the `write` tool to save it. After successfully writing the file using the tool, reply to the user with exactly FINAL_WRITTEN.\n'''
             notify(f'magma-blog 终稿编排开始（{date}）\n- 已检测到 draft-ready.json\n- 正在触发 worker-general 生成 final-reflection.md。')
             proc = run([
                 str(OPENCLAW_BIN), 'agent',
                 '--agent', 'worker-general',
+                '--session-id', f'finalize-{date}',
                 '--message', task,
                 '--timeout', '600',
                 '--json',
