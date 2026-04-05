@@ -1,0 +1,42 @@
+# Daily Review 2026-04-05
+
+- Related: [[Second Brain Operating System]], [[Second-Brain-Integration-Plan-v1]], [[Task Management]], [[FlashNotes]]
+
+## 今日关键事项
+- 围绕 [[主动知识库]] / [[Knowledge Operating System]] / [[FlashNotes]] 完成一轮高质量资料吸收，重点消化了 Karpathy 的 [[LLM Knowledge Bases]]、[[Idea File]]、[[llm-wiki]] gist，以及 [[obsidian-mind]]。
+- 明确了 [[FlashNotes]] 的下一步落地方向：不是继续堆零散收藏，而是开始向“可累积、可回流、可维护”的知识系统演进。
+- 在 Discord `#bookmarks` 渠道内，已将多条高价值外部资料完成归档、摘要、主题挂接，并写入 FlashNotes inbox，形成了可继续深化的材料基础。
+- 对“云主机部署 [[OpenClaw]] 的配置要求”给出实用判断：轻量可用不高，但真正的瓶颈更多在浏览器、多 agent、以及运维设计，而不是单看 CPU。
+
+## 决策与变更
+- 确认 [[FlashNotes]] / 第二大脑的实施策略应采用 **capture → promote → structure**，先做最小闭环，不追求一步到位的大系统。
+- 确认知识系统的最小落地骨架应包含：
+  - 原始层 `raw`
+  - 知识层/主题页回流
+  - `[[Index]]` 作为知识地图
+  - `[[log]]` 作为演化时间线
+  - `[[problem pack]]` 作为正式研究前置层
+- 强化了一个关键结构判断：**durable memory 应该住在 vault / [[FlashNotes]] 里，聊天记忆或 `MEMORY.md` 更适合做索引与入口，而不是存储本体。**
+- 对 [[Karpathy]] 的 `llm-wiki` gist 提炼出稳定框架：
+  - `raw sources`
+  - `wiki`
+  - `schema`
+  - `ingest / query / lint` 三循环
+  - `index.md + log.md` 双文件导航
+- 对 [[obsidian-mind]] 的结论不是“整套照搬”，而是**抽骨架不抄皮相**：吸收其 [[Vault-first Memory]]、[[Session Lifecycle]]、[[Hooks]]、[[QMD]] proactive search、wrap-up / audit 思路，而不直接复制其偏工程绩效场景的重型模板。
+
+## 错误与改进
+- 在跟进 Karpathy 的 gist 时，第一次只拿到不完整短链，公共抓取返回 404；随后补拿精确 gist 链接后完成了正文阅读与分析。这个过程暴露出：**外部链接分析必须先确认精确 URL，再做内容判断**。
+- 对知识系统的讨论中已经进一步澄清：当前风险不是“没有更多资料”，而是**单篇笔记孤立存在、缺少回写主题页与系统性索引**。后续应把“主题回流”视为必做步骤，而不是可选增强。
+- 对 [[OpenClaw]] 云主机场景也做了一个现实纠偏：真正难点通常在 webhook / HTTPS / 浏览器登录态 / 重启恢复 / watchdog 等运维层，后续若继续推进部署类判断，应优先把运维结构写成基线，而不是停留在配置估算。
+
+## 未完成事项（待提醒）
+- 还没有正式产出那张计划中的对照卡：**[[主动知识库]] vs [[Karpathy：LLM Knowledge Bases]] vs [[obsidian-mind]]**。
+- 还没有把今天讨论出的最小实施方案真正落成 [[FlashNotes]] 内的目录、模板、`[[Index]]`、`[[log]]`、`[[problem pack]]` 模板等实际文件。
+- 还没有把“单条归档后自动/半自动回流主题页”的流程做成稳定规则或脚本。
+- 还没有把 [[QMD]] / proactive search / pre-research context bundle 真正接进当前第二大脑工作流。
+
+## 明日优先级 Top 3
+1. 把今天关于 [[FlashNotes]] 的实施方案落成最小可执行骨架：目录、`[[Index]]`、`[[log]]`、`[[problem pack]]` 模板、主题页模板。
+2. 产出一张正式对照卡：[[主动知识库]] vs [[Karpathy：LLM Knowledge Bases]] vs [[obsidian-mind]]，沉淀为可复用方法论页面。
+3. 设计并试跑“单条收藏 → 主题回流 → 索引更新”的最小闭环，避免知识继续停留在 inbox / 单篇摘要层。
