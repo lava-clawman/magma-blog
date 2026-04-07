@@ -12,6 +12,8 @@ OPENCLAW_BIN="/Users/lab/.local/bin/openclaw"
 ANTIGRAVITY_APP="/Applications/Antigravity.app/Contents/MacOS/Electron"
 OPENCLI_CDP_ENDPOINT="http://127.0.0.1:9224"
 export OPENCLI_CDP_ENDPOINT
+WORKSPACE_NAME="magma-blog"
+WORKSPACE_HELPER="$REPO/scripts/antigravity-open-workspace.py"
 mkdir -p "$LOG_DIR" "$LOCK_DIR"
 
 DATE="${1:-$(date -v-1d +%F)}"
@@ -78,6 +80,62 @@ ensure_antigravity() {
   "$ANTIGRAVITY_APP" --remote-debugging-port=9224 >/tmp/antigravity-opencli.log 2>&1 &
   sleep 8
   if curl -fsS "$OPENCLI_CDP_ENDPOINT/json/version" >/dev/null 2>&1; then
+    return 0
+  fi
+  return 1
+}
+
+ensure_workspace_page() {
+  local status_json title workspace_target
+  status_json="$($OPENCLI_BIN antigravity status -f json 2>/dev/null || true)"
+  title="$(printf '%s' "$status_json" | python3 - <<'PY'
+import json,sys
+raw=sys.stdin.read().strip()
+if not raw:
+    print('')
+    raise SystemExit(0)
+try:
+    print(json.loads(raw).get('title',''))
+except Exception:
+    print('')
+PY
+)"
+
+  if [ "$title" = "Launchpad" ]; then
+    echo "antigravity is on Launchpad; trying to open workspace: $WORKSPACE_NAME"
+    osascript <<EOF >/dev/null 2>&1 || true
+      tell application "Antigravity" to activate
+      delay 0.5
+      tell application "System Events"
+        keystroke "$WORKSPACE_NAME"
+        delay 0.5
+        key code 36
+      end tell
+EOF
+    sleep 5
+  fi
+
+  workspace_target="$(python3 "$WORKSPACE_HELPER" "$WORKSPACE_NAME" "$ARTIFACT_DIR/antigravity-targets.json" 2>/dev/null || true)"
+  if [ -n "$workspace_target" ] && [ "$workspace_target" != "NO_MATCH" ]; then
+    export OPENCLI_CDP_TARGET="$workspace_target"
+    return 0
+  fi
+
+  status_json="$($OPENCLI_BIN antigravity status -f json 2>/dev/null || true)"
+  title="$(printf '%s' "$status_json" | python3 - <<'PY'
+import json,sys
+raw=sys.stdin.read().strip()
+if not raw:
+    print('')
+    raise SystemExit(0)
+try:
+    print(json.loads(raw).get('title',''))
+except Exception:
+    print('')
+PY
+)"
+  if [ "$title" != "Launchpad" ] && [ -n "$title" ]; then
+    unset OPENCLI_CDP_TARGET
     return 0
   fi
   return 1
@@ -172,6 +230,7 @@ antigravity_generate_draft() {
   local i
   ensure_antigravity || return 1
   run_opencli_step "opencli antigravity status" $OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || return 1
+  ensure_workspace_page || return 1
   run_opencli_step "opencli antigravity new" $OPENCLI_BIN antigravity new -f json >/dev/null 2>&1 || return 1
   switch_model_if_needed || return 1
   run_opencli_step "opencli antigravity send" $OPENCLI_BIN antigravity send "$(cat "$prompt_file")" -f json >/dev/null 2>&1 || return 1
