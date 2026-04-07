@@ -101,23 +101,31 @@ except Exception:
 PY
 )"
 
+  workspace_target="$(python3 "$WORKSPACE_HELPER" "" "$ARTIFACT_DIR/antigravity-targets.json" 2>/dev/null || true)"
+  if [ -n "$workspace_target" ] && [ "$workspace_target" != "NO_MATCH" ]; then
+    export OPENCLI_CDP_TARGET="$workspace_target"
+    echo "selected existing antigravity workspace target: $workspace_target"
+    return 0
+  fi
+
   if [ "$title" = "Launchpad" ]; then
-    echo "antigravity is on Launchpad; trying to open workspace: $WORKSPACE_NAME"
+    echo "antigravity is on Launchpad and no existing workspace page is visible; trying to open a recent workspace"
     osascript <<EOF >/dev/null 2>&1 || true
       tell application "Antigravity" to activate
       delay 0.5
       tell application "System Events"
-        keystroke "$WORKSPACE_NAME"
-        delay 0.5
+        key code 125
+        delay 0.2
         key code 36
       end tell
 EOF
     sleep 5
   fi
 
-  workspace_target="$(python3 "$WORKSPACE_HELPER" "$WORKSPACE_NAME" "$ARTIFACT_DIR/antigravity-targets.json" 2>/dev/null || true)"
+  workspace_target="$(python3 "$WORKSPACE_HELPER" "" "$ARTIFACT_DIR/antigravity-targets.json" 2>/dev/null || true)"
   if [ -n "$workspace_target" ] && [ "$workspace_target" != "NO_MATCH" ]; then
     export OPENCLI_CDP_TARGET="$workspace_target"
+    echo "selected workspace target after Launchpad exit: $workspace_target"
     return 0
   fi
 
@@ -136,6 +144,7 @@ PY
 )"
   if [ "$title" != "Launchpad" ] && [ -n "$title" ]; then
     unset OPENCLI_CDP_TARGET
+    echo "antigravity already on non-Launchpad page: $title"
     return 0
   fi
   return 1
