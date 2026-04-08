@@ -3,7 +3,7 @@ set -euo pipefail
 
 PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 HOME=/Users/lab
-DAILY_LINE='30 6 * * * PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin HOME=/Users/lab /Users/lab/Flash-Claude/projects/magma-blog/scripts/publish-from-review.sh >/tmp/magma-blog-cron.log 2>&1'
+DAILY_LINE='35 3 * * * PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin HOME=/Users/lab /Users/lab/Flash-Claude/projects/magma-blog/scripts/publish-from-review.sh >/tmp/magma-blog-cron.log 2>&1'
 RETRY_LINE='35 * * * * PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin HOME=/Users/lab /Users/lab/Flash-Claude/projects/magma-blog/scripts/retry-missing-reflections.sh >/tmp/magma-blog-retry.log 2>&1'
 
 TMP="$(mktemp)"

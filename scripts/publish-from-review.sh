@@ -203,31 +203,43 @@ try:
 except Exception:
     raise SystemExit(1)
 text = "\n".join(item.get("content", "") for item in data if isinstance(item, dict))
-title_iter = list(re.finditer(r'title:\s*"([^"]+)"', text))
-real_start = None
-for m in reversed(title_iter):
+if 'Our servers are experiencing high traffic right now' in text or 'Agent terminated due to error' in text:
+    raise SystemExit(3)
+# guard against extracting from the echoed prompt itself
+review_marker = f'Daily Review source:# Daily Review {date}'
+marker_pos = text.find(review_marker)
+if marker_pos != -1:
+    search_text = text[marker_pos + len(review_marker):]
+else:
+    search_text = text
+fm_iter = list(re.finditer(r'---\s*title:\s*"([^"]+)"\s*date:\s*(\d{4}-\d{2}-\d{2})\s*description:\s*"([^"]+)"\s*tags:\s*(\[.*?\])', search_text, re.S))
+real = None
+for m in fm_iter:
     title = m.group(1).strip()
-    if title and title != '...':
-        real_start = m.start()
-        break
-if real_start is None:
+    fm_date = m.group(2).strip()
+    if title and title != '...' and fm_date == date:
+        real = m
+if real is None:
     raise SystemExit(2)
-chunk = text[real_start:]
-flat = re.search(r'title:\s*"(?P<title>[^"]+)"\s+date:\s*(?P<date>\d{4}-\d{2}-\d{2})\s+description:\s*"(?P<desc>[^"]+)"\s+tags:\s*(?P<tags>\[.*?\])\s+(?P<body>.*)', chunk, re.S)
-if not flat:
+chunk = search_text[real.start():]
+end_markers = [
+    '\nundo\n',
+    '\nThought for ',
+    '\nError\n',
+    '\nAsk anything, @ to mention, / for workflows',
+    '\nPlanning\n',
+]
+end = len(chunk)
+for mk in end_markers:
+    pos = chunk.find(mk)
+    if pos != -1 and pos < end:
+        end = pos
+chunk = chunk[:end].strip()
+if not chunk.startswith('---'):
     raise SystemExit(2)
-body = flat.group('body')
-body = re.sub(r'\n(?:Thinking\.|Copy|Ask anything.*|Planning|Send)\s*$', '', body, flags=re.S).strip()
-match = (
-    '---\n'
-    f'title: "{flat.group("title").strip()}"\n'
-    f'date: {flat.group("date").strip()}\n'
-    f'description: "{flat.group("desc").strip()}"\n'
-    f'tags: {flat.group("tags").strip()}\n'
-    '---\n\n'
-    + body + '\n'
-)
-out.write_text(match)
+if len(chunk.splitlines()) < 8:
+    raise SystemExit(2)
+out.write_text(chunk.rstrip() + '\n')
 PY
 }
 
@@ -236,22 +248,30 @@ antigravity_generate_draft() {
   local read_json="$2"
   local raw_hints="$3"
   local out_file="$4"
-  local i
+  local round i rc
   ensure_antigravity || return 1
   run_opencli_step "opencli antigravity status" $OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || return 1
   ensure_workspace_page || return 1
-  run_opencli_step "opencli antigravity new" $OPENCLI_BIN antigravity new -f json >/dev/null 2>&1 || return 1
-  switch_model_if_needed || return 1
-  run_opencli_step "opencli antigravity send" $OPENCLI_BIN antigravity send "$(cat "$prompt_file")" -f json >/dev/null 2>&1 || return 1
-  for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
-    sleep 10
-    if $OPENCLI_BIN antigravity read -f json > "$read_json" 2>/dev/null; then
-      cp "$read_json" "$raw_hints"
-      if extract_draft_from_read_json "$read_json" "$out_file"; then
-        echo "draft extracted from Antigravity read payload"
-        return 0
+  for round in 1 2 3; do
+    echo "antigravity draft round $round/3"
+    run_opencli_step "opencli antigravity new" $OPENCLI_BIN antigravity new -f json >/dev/null 2>&1 || return 1
+    switch_model_if_needed || return 1
+    run_opencli_step "opencli antigravity send" $OPENCLI_BIN antigravity send "$(cat "$prompt_file")" -f json >/dev/null 2>&1 || return 1
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+      sleep 10
+      if $OPENCLI_BIN antigravity read -f json > "$read_json" 2>/dev/null; then
+        cp "$read_json" "$raw_hints"
+        if extract_draft_from_read_json "$read_json" "$out_file"; then
+          echo "draft extracted from Antigravity read payload"
+          return 0
+        fi
+        rc=$?
+        if [ "$rc" -eq 3 ]; then
+          echo "antigravity upstream high-traffic / terminated error detected; retrying round"
+          break
+        fi
       fi
-    fi
+    done
   done
   return 1
 }
