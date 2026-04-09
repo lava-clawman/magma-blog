@@ -59,19 +59,41 @@ claude_generate_draft() {
   local prompt_file="$1"
   local out_file="$2"
   local tmp="${out_file}.tmp"
-  rm -f "$tmp"
-  # Run Claude Code in non-interactive print mode; capture stdout as draft candidate.
-  if ! claude -p "$(cat "$prompt_file")" > "$tmp" 2>/dev/null; then
+  local err_file="$ARTIFACT_DIR/claude-draft.stderr.txt"
+  local raw_file="$ARTIFACT_DIR/claude-draft.raw.txt"
+  local meta_file="$ARTIFACT_DIR/claude-draft.meta.json"
+  local validate_log="$ARTIFACT_DIR/claude-draft.validate.txt"
+  local rc=0
+  rm -f "$tmp" "$err_file" "$raw_file" "$meta_file" "$validate_log"
+  if ! claude -p "$(cat "$prompt_file")" > "$tmp" 2> "$err_file"; then
+    rc=$?
+    cp "$tmp" "$raw_file" 2>/dev/null || true
+    python3 - "$meta_file" "$rc" "$tmp" "$err_file" <<'PY'
+import json, sys
+from pathlib import Path
+meta, rc, outp, errp = sys.argv[1:5]
+out = Path(outp).read_text() if Path(outp).exists() else ''
+err = Path(errp).read_text() if Path(errp).exists() else ''
+Path(meta).write_text(json.dumps({
+  'stage': 'command_failed',
+  'returncode': int(rc),
+  'stdout_chars': len(out),
+  'stderr_chars': len(err),
+  'stdout_head': out[:2000],
+  'stderr_head': err[:2000],
+}, indent=2) + '\n')
+PY
     rm -f "$tmp"
     return 1
   fi
-  # Validate: locate the frontmatter block and check minimum quality bars.
-  python3 - "$tmp" "$out_file" "$DATE" <<'PY'
+  cp "$tmp" "$raw_file" 2>/dev/null || true
+  python3 - "$tmp" "$out_file" "$DATE" "$validate_log" <<'PY'
 import re, sys
 from pathlib import Path
 text = Path(sys.argv[1]).read_text()
 out  = Path(sys.argv[2])
 date = sys.argv[3]
+logp = Path(sys.argv[4])
 fm_iter = list(re.finditer(
     r'---\s*\ntitle:\s*"([^"]+)"\s*\ndate:\s*(\d{4}-\d{2}-\d{2})\s*\ndescription:\s*"([^"]+)"\s*\ntags:\s*(\[.*?\])',
     text, re.S,
@@ -82,18 +104,40 @@ for m in fm_iter:
         real = m
         break
 if real is None:
+    logp.write_text('validation_failed: no matching frontmatter block found\n')
     raise SystemExit(2)
 chunk = text[real.start():].strip()
 if not chunk.startswith('---'):
+    logp.write_text('validation_failed: extracted chunk does not start with frontmatter\n')
     raise SystemExit(2)
 if len(chunk.splitlines()) < 8:
+    logp.write_text('validation_failed: extracted chunk too short by line count\n')
     raise SystemExit(2)
 body = chunk.split('---', 2)[-1]
 if len(body.strip()) < 400:
+    logp.write_text(f'validation_failed: body too short ({len(body.strip())} chars)\n')
     raise SystemExit(4)
 out.write_text(chunk.rstrip() + '\n')
+logp.write_text(f'validation_ok: body_chars={len(body.strip())}\n')
 PY
-  local rc=$?
+  rc=$?
+  python3 - "$meta_file" "$rc" "$tmp" "$err_file" "$validate_log" <<'PY'
+import json, sys
+from pathlib import Path
+meta, rc, outp, errp, logp = sys.argv[1:6]
+out = Path(outp).read_text() if Path(outp).exists() else ''
+err = Path(errp).read_text() if Path(errp).exists() else ''
+log = Path(logp).read_text() if Path(logp).exists() else ''
+Path(meta).write_text(json.dumps({
+  'stage': 'validation_done' if int(rc) == 0 else 'validation_failed',
+  'returncode': int(rc),
+  'stdout_chars': len(out),
+  'stderr_chars': len(err),
+  'stdout_head': out[:2000],
+  'stderr_head': err[:2000],
+  'validation': log[:2000],
+}, indent=2) + '\n')
+PY
   rm -f "$tmp"
   return "$rc"
 }
