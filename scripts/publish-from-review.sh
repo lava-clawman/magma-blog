@@ -27,6 +27,7 @@ DRAFT_READY_FLAG="$ARTIFACT_DIR/draft-ready.json"
 CHANNEL_TARGET="channel:1484517576985022545"
 MODEL_LABEL="Claude Opus 4.6 (Thinking)"
 DRAFT_FILE="$ARTIFACT_DIR/antigravity-draft.md"
+LAST_DRAFT_STATUS="unknown"
 
 notify() {
   local text="$1"
@@ -52,7 +53,19 @@ fail_and_notify() {
   echo "$reason"
   mkdir -p "$ARTIFACT_DIR"
   if [ ! -f "$FAIL_FLAG" ]; then
-    if notify "magma-blog 草稿阶段失败（${DATE}）\n- 原因：${reason}\n- 尚未进入终稿与发布阶段。"; then
+    local extra="- 尚未进入终稿与发布阶段。"
+    case "$LAST_DRAFT_STATUS" in
+      upstream_busy)
+        extra="- 真实原因：Antigravity 上游返回 high traffic / agent terminated，三轮内未恢复。\n- 尚未进入终稿与发布阶段。"
+        ;;
+      mixed_draft_rejected)
+        extra="- 真实原因：Antigravity 已返回带噪草稿，但草稿阶段当前仍未把它认定为可交接产物。\n- 尚未进入终稿与发布阶段。"
+        ;;
+      no_useful_output)
+        extra="- 真实原因：未检测到可用草稿正文，只看到 prompt 回显或空结果。\n- 尚未进入终稿与发布阶段。"
+        ;;
+    esac
+    if notify "magma-blog 草稿阶段失败（${DATE}）\n- 原因：${reason}\n${extra}"; then
       : > "$FAIL_FLAG"
       echo "failure notification sent"
     else
@@ -205,13 +218,9 @@ except Exception:
 text = "\n".join(item.get("content", "") for item in data if isinstance(item, dict))
 if 'Our servers are experiencing high traffic right now' in text or 'Agent terminated due to error' in text:
     raise SystemExit(3)
-# guard against extracting from the echoed prompt itself
 review_marker = f'Daily Review source:# Daily Review {date}'
 marker_pos = text.find(review_marker)
-if marker_pos != -1:
-    search_text = text[marker_pos + len(review_marker):]
-else:
-    search_text = text
+search_text = text[marker_pos + len(review_marker):] if marker_pos != -1 else text
 fm_iter = list(re.finditer(r'---\s*title:\s*"([^"]+)"\s*date:\s*(\d{4}-\d{2}-\d{2})\s*description:\s*"([^"]+)"\s*tags:\s*(\[.*?\])', search_text, re.S))
 real = None
 for m in fm_iter:
@@ -223,11 +232,9 @@ if real is None:
     raise SystemExit(2)
 chunk = search_text[real.start():]
 end_markers = [
-    '\nundo\n',
-    '\nThought for ',
-    '\nError\n',
     '\nAsk anything, @ to mention, / for workflows',
     '\nPlanning\n',
+    '\nSend\n',
 ]
 end = len(chunk)
 for mk in end_markers:
@@ -239,6 +246,9 @@ if not chunk.startswith('---'):
     raise SystemExit(2)
 if len(chunk.splitlines()) < 8:
     raise SystemExit(2)
+body = chunk.split('---', 2)[-1]
+if len(body.strip()) < 400:
+    raise SystemExit(4)
 out.write_text(chunk.rstrip() + '\n')
 PY
 }
@@ -249,6 +259,7 @@ antigravity_generate_draft() {
   local raw_hints="$3"
   local out_file="$4"
   local round i rc
+  LAST_DRAFT_STATUS="unknown"
   ensure_antigravity || return 1
   run_opencli_step "opencli antigravity status" $OPENCLI_BIN antigravity status -f json >/dev/null 2>&1 || return 1
   ensure_workspace_page || return 1
@@ -263,12 +274,19 @@ antigravity_generate_draft() {
         cp "$read_json" "$raw_hints"
         if extract_draft_from_read_json "$read_json" "$out_file"; then
           echo "draft extracted from Antigravity read payload"
+          LAST_DRAFT_STATUS="success"
           return 0
         fi
         rc=$?
         if [ "$rc" -eq 3 ]; then
+          LAST_DRAFT_STATUS="upstream_busy"
           echo "antigravity upstream high-traffic / terminated error detected; retrying round"
           break
+        elif [ "$rc" -eq 4 ]; then
+          LAST_DRAFT_STATUS="mixed_draft_rejected"
+          echo "mixed draft detected but below current handoff threshold; waiting for fuller output"
+        else
+          LAST_DRAFT_STATUS="no_useful_output"
         fi
       fi
     done
