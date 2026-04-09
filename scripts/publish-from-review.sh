@@ -20,6 +20,7 @@ FAIL_FLAG="$ARTIFACT_DIR/.failure-notified"
 DRAFT_READY_FLAG="$ARTIFACT_DIR/draft-ready.json"
 CHANNEL_TARGET="channel:1484517576985022545"
 DRAFT_FILE="$ARTIFACT_DIR/antigravity-draft.md"
+LAST_DRAFT_STATUS="unknown"
 
 notify() {
   local text="$1"
@@ -45,7 +46,19 @@ fail_and_notify() {
   echo "$reason"
   mkdir -p "$ARTIFACT_DIR"
   if [ ! -f "$FAIL_FLAG" ]; then
-    if notify "magma-blog 草稿阶段失败（${DATE}）\n- 原因：${reason}\n- 尚未进入终稿与发布阶段。"; then
+    local extra="- 尚未进入终稿与发布阶段。"
+    case "$LAST_DRAFT_STATUS" in
+      login_required)
+        extra="- 真实原因：Claude CLI 返回未登录状态（Not logged in · Please run /login），短重试后仍未恢复。\n- 尚未进入终稿与发布阶段。"
+        ;;
+      command_failed)
+        extra="- 真实原因：Claude CLI 命令执行失败。\n- 尚未进入终稿与发布阶段。"
+        ;;
+      validation_failed)
+        extra="- 真实原因：Claude 已返回输出，但草稿校验未通过。\n- 尚未进入终稿与发布阶段。"
+        ;;
+    esac
+    if notify "magma-blog 草稿阶段失败（${DATE}）\n- 原因：${reason}\n${extra}"; then
       : > "$FAIL_FLAG"
       echo "failure notification sent"
     else
@@ -64,30 +77,13 @@ claude_generate_draft() {
   local meta_file="$ARTIFACT_DIR/claude-draft.meta.json"
   local validate_log="$ARTIFACT_DIR/claude-draft.validate.txt"
   local rc=0
+  local attempt
+  LAST_DRAFT_STATUS="unknown"
   rm -f "$tmp" "$err_file" "$raw_file" "$meta_file" "$validate_log"
-  if ! claude -p "$(cat "$prompt_file")" > "$tmp" 2> "$err_file"; then
-    rc=$?
-    cp "$tmp" "$raw_file" 2>/dev/null || true
-    python3 - "$meta_file" "$rc" "$tmp" "$err_file" <<'PY'
-import json, sys
-from pathlib import Path
-meta, rc, outp, errp = sys.argv[1:5]
-out = Path(outp).read_text() if Path(outp).exists() else ''
-err = Path(errp).read_text() if Path(errp).exists() else ''
-Path(meta).write_text(json.dumps({
-  'stage': 'command_failed',
-  'returncode': int(rc),
-  'stdout_chars': len(out),
-  'stderr_chars': len(err),
-  'stdout_head': out[:2000],
-  'stderr_head': err[:2000],
-}, indent=2) + '\n')
-PY
-    rm -f "$tmp"
-    return 1
-  fi
-  cp "$tmp" "$raw_file" 2>/dev/null || true
-  python3 - "$tmp" "$out_file" "$DATE" "$validate_log" <<'PY'
+  for attempt in 1 2 3; do
+    if claude -p "$(cat "$prompt_file")" > "$tmp" 2> "$err_file"; then
+      cp "$tmp" "$raw_file" 2>/dev/null || true
+      python3 - "$tmp" "$out_file" "$DATE" "$validate_log" <<'PY'
 import re, sys
 from pathlib import Path
 text = Path(sys.argv[1]).read_text()
@@ -120,16 +116,17 @@ if len(body.strip()) < 400:
 out.write_text(chunk.rstrip() + '\n')
 logp.write_text(f'validation_ok: body_chars={len(body.strip())}\n')
 PY
-  rc=$?
-  python3 - "$meta_file" "$rc" "$tmp" "$err_file" "$validate_log" <<'PY'
+      rc=$?
+      python3 - "$meta_file" "$rc" "$tmp" "$err_file" "$validate_log" "$attempt" <<'PY'
 import json, sys
 from pathlib import Path
-meta, rc, outp, errp, logp = sys.argv[1:6]
+meta, rc, outp, errp, logp, attempt = sys.argv[1:7]
 out = Path(outp).read_text() if Path(outp).exists() else ''
 err = Path(errp).read_text() if Path(errp).exists() else ''
 log = Path(logp).read_text() if Path(logp).exists() else ''
 Path(meta).write_text(json.dumps({
   'stage': 'validation_done' if int(rc) == 0 else 'validation_failed',
+  'attempt': int(attempt),
   'returncode': int(rc),
   'stdout_chars': len(out),
   'stderr_chars': len(err),
@@ -138,8 +135,48 @@ Path(meta).write_text(json.dumps({
   'validation': log[:2000],
 }, indent=2) + '\n')
 PY
+      if [ "$rc" -eq 0 ]; then
+        LAST_DRAFT_STATUS="success"
+      else
+        LAST_DRAFT_STATUS="validation_failed"
+      fi
+      rm -f "$tmp"
+      return "$rc"
+    fi
+
+    rc=$?
+    cp "$tmp" "$raw_file" 2>/dev/null || true
+    python3 - "$meta_file" "$rc" "$tmp" "$err_file" "$attempt" <<'PY'
+import json, sys
+from pathlib import Path
+meta, rc, outp, errp, attempt = sys.argv[1:6]
+out = Path(outp).read_text() if Path(outp).exists() else ''
+err = Path(errp).read_text() if Path(errp).exists() else ''
+stage = 'command_failed'
+if 'Not logged in · Please run /login' in out:
+    stage = 'login_required'
+Path(meta).write_text(json.dumps({
+  'stage': stage,
+  'attempt': int(attempt),
+  'returncode': int(rc),
+  'stdout_chars': len(out),
+  'stderr_chars': len(err),
+  'stdout_head': out[:2000],
+  'stderr_head': err[:2000],
+}, indent=2) + '\n')
+PY
+    if grep -Fq 'Not logged in · Please run /login' "$tmp" 2>/dev/null; then
+      LAST_DRAFT_STATUS="login_required"
+      echo "claude login state unavailable on attempt ${attempt}/3; retrying"
+      sleep 5
+      continue
+    fi
+    LAST_DRAFT_STATUS="command_failed"
+    rm -f "$tmp"
+    return 1
+  done
   rm -f "$tmp"
-  return "$rc"
+  return 1
 }
 
 exec >>"$LOG_FILE" 2>&1
