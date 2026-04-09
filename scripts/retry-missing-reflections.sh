@@ -20,39 +20,48 @@ run_publish_stage() {
   local stage_lock="$LOCK_DIR/retry-${date}.lock"
 
   if [ ! -f "$review_file" ]; then
-    return 0
+    return 1
   fi
 
   if [ -f "$success_flag" ] || [ -f "$blog_file" ]; then
-    return 0
+    return 1
   fi
 
   if [ -e "$stage_lock" ]; then
     echo "retry lock exists for $date, skipping"
-    return 0
+    return 1
   fi
   trap 'rm -f "$stage_lock"' RETURN
   : > "$stage_lock"
 
-  if [ -f "$final_file" ]; then
-    /usr/bin/python3 "$ORCH" "$date" || true
-    return 0
-  fi
-
-  if [ -f "$draft_ready" ]; then
+  if [ -f "$final_file" ] || [ -f "$draft_ready" ]; then
     /usr/bin/python3 "$ORCH" "$date" || true
     return 0
   fi
 
   "$REPO/scripts/publish-from-review.sh" "$date" || true
+  return 0
 }
 
-HOUR="$(date +%H)"
+pick_target_date() {
+  local hour date
+  hour="$(date +%H)"
 
-if [ "$HOUR" -ge 7 ]; then
-  run_publish_stage "$(date -v-1d +%F)"
-fi
+  if [ "$hour" -ge 7 ]; then
+    date="$(date -v-1d +%F)"
+    if run_publish_stage "$date"; then
+      return 0
+    fi
+  fi
 
-for offset in 2 3; do
-  run_publish_stage "$(date -v-${offset}d +%F)"
-done
+  for offset in 2 3; do
+    date="$(date -v-${offset}d +%F)"
+    if run_publish_stage "$date"; then
+      return 0
+    fi
+  done
+
+  return 0
+}
+
+pick_target_date
