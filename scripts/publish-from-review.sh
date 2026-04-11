@@ -21,6 +21,7 @@ DRAFT_READY_FLAG="$ARTIFACT_DIR/draft-ready.json"
 CHANNEL_TARGET="channel:1484517576985022545"
 DRAFT_FILE="$ARTIFACT_DIR/antigravity-draft.md"
 LAST_DRAFT_STATUS="unknown"
+DRAFT_AGENT_SESSION="draft-${DATE}"
 
 notify() {
   local text="$1"
@@ -68,22 +69,136 @@ fail_and_notify() {
   exit 1
 }
 
-claude_generate_draft() {
+agent_generate_draft() {
   local prompt_file="$1"
   local out_file="$2"
-  local tmp="${out_file}.tmp"
   local err_file="$ARTIFACT_DIR/claude-draft.stderr.txt"
   local raw_file="$ARTIFACT_DIR/claude-draft.raw.txt"
   local meta_file="$ARTIFACT_DIR/claude-draft.meta.json"
   local validate_log="$ARTIFACT_DIR/claude-draft.validate.txt"
+  local result_file="$ARTIFACT_DIR/claude-draft.agent-result.txt"
+  local task_file="$ARTIFACT_DIR/claude-draft.agent-task.txt"
+  local response_file="$ARTIFACT_DIR/claude-draft.agent-response.txt"
+  local status_file="$ARTIFACT_DIR/claude-draft.agent-status.json"
   local rc=0
-  local attempt
   LAST_DRAFT_STATUS="unknown"
-  rm -f "$tmp" "$err_file" "$raw_file" "$meta_file" "$validate_log"
-  for attempt in 1 2 3; do
-    if claude -p "$(cat "$prompt_file")" > "$tmp" 2> "$err_file"; then
-      cp "$tmp" "$raw_file" 2>/dev/null || true
-      python3 - "$tmp" "$out_file" "$DATE" "$validate_log" <<'PY'
+  rm -f "$err_file" "$raw_file" "$meta_file" "$validate_log" "$result_file" "$task_file" "$response_file" "$status_file" "$out_file"
+
+  cat > "$task_file" <<EOF
+In the current working directory, read the prompt file at ${prompt_file}.
+
+Your job is NOT to author the article yourself.
+Your job is to invoke Claude Code CLI from inside this agent context so Claude generates the draft.
+
+CRITICAL EXECUTION RULES:
+- Use the exec tool to run Claude Code CLI.
+- Run Claude in non-interactive print mode, not chat mode.
+- Claude must be the component that generates the article text.
+- Save Claude's generated markdown draft directly to ${out_file}.
+- You may use shell redirection and/or a follow-up write step if needed, but the prose itself must come from Claude CLI output, not from you composing it directly.
+- Do NOT ask follow-up questions.
+
+Claude output requirements:
+- Valid YAML frontmatter plus body.
+- Frontmatter must include:
+  - title
+  - date: ${DATE}
+  - description
+  - tags
+- Use first-person voice.
+- 500-900 words.
+- Remove private identifiers, handles, email addresses, and overly specific personal traces.
+- Focus on durable workflow / judgment / system / engineering lessons.
+- End with an unresolved tension, not a neat conclusion.
+- Do NOT include planning notes, status text, or meta-commentary in the saved file.
+
+Suggested Claude command shape:
+claude --permission-mode bypassPermissions --print "$(cat ${prompt_file})"
+
+After Claude-generated content has been successfully saved to ${out_file}, reply with exactly: DRAFT_WRITTEN
+EOF
+
+  set +e
+  "$OPENCLAW_BIN" agent \
+    --agent worker-general \
+    --session-id "$DRAFT_AGENT_SESSION" \
+    --message "$(cat "$task_file")" \
+    --timeout 600 \
+    --json > "$response_file" 2> "$err_file"
+  rc=$?
+  set -e
+
+  cp "$response_file" "$result_file" 2>/dev/null || true
+  cp "$out_file" "$raw_file" 2>/dev/null || true
+
+  if [ "$rc" -ne 0 ]; then
+    LAST_DRAFT_STATUS="command_failed"
+    python3 - "$meta_file" "$rc" "$response_file" "$err_file" "$status_file" <<'PY'
+import json, sys
+from pathlib import Path
+meta, rc, outp, errp, statusp = sys.argv[1:6]
+out = Path(outp).read_text() if Path(outp).exists() else ''
+err = Path(errp).read_text() if Path(errp).exists() else ''
+status = {'stage': 'agent_command_failed'}
+Path(statusp).write_text(json.dumps(status, indent=2) + '\n')
+Path(meta).write_text(json.dumps({
+  'stage': 'agent_command_failed',
+  'returncode': int(rc),
+  'stdout_chars': len(out),
+  'stderr_chars': len(err),
+  'stdout_head': out[:2000],
+  'stderr_head': err[:2000],
+}, indent=2) + '\n')
+PY
+    return 1
+  fi
+
+  if ! grep -Fq 'DRAFT_WRITTEN' "$response_file" 2>/dev/null; then
+    LAST_DRAFT_STATUS="command_failed"
+    python3 - "$meta_file" "$response_file" "$err_file" "$status_file" <<'PY'
+import json, sys
+from pathlib import Path
+meta, outp, errp, statusp = sys.argv[1:5]
+out = Path(outp).read_text() if Path(outp).exists() else ''
+err = Path(errp).read_text() if Path(errp).exists() else ''
+status = {'stage': 'agent_missing_ack'}
+Path(statusp).write_text(json.dumps(status, indent=2) + '\n')
+Path(meta).write_text(json.dumps({
+  'stage': 'agent_missing_ack',
+  'returncode': 0,
+  'stdout_chars': len(out),
+  'stderr_chars': len(err),
+  'stdout_head': out[:2000],
+  'stderr_head': err[:2000],
+}, indent=2) + '\n')
+PY
+    return 1
+  fi
+
+  if [ ! -s "$out_file" ]; then
+    LAST_DRAFT_STATUS="command_failed"
+    python3 - "$meta_file" "$response_file" "$err_file" "$status_file" <<'PY'
+import json, sys
+from pathlib import Path
+meta, outp, errp, statusp = sys.argv[1:5]
+out = Path(outp).read_text() if Path(outp).exists() else ''
+err = Path(errp).read_text() if Path(errp).exists() else ''
+status = {'stage': 'draft_file_missing'}
+Path(statusp).write_text(json.dumps(status, indent=2) + '\n')
+Path(meta).write_text(json.dumps({
+  'stage': 'draft_file_missing',
+  'returncode': 0,
+  'stdout_chars': len(out),
+  'stderr_chars': len(err),
+  'stdout_head': out[:2000],
+  'stderr_head': err[:2000],
+}, indent=2) + '\n')
+PY
+    return 1
+  fi
+
+  cp "$out_file" "$raw_file" 2>/dev/null || true
+  python3 - "$out_file" "$out_file" "$DATE" "$validate_log" <<'PY'
 import re, sys
 from pathlib import Path
 text = Path(sys.argv[1]).read_text()
@@ -91,7 +206,7 @@ out  = Path(sys.argv[2])
 date = sys.argv[3]
 logp = Path(sys.argv[4])
 fm_iter = list(re.finditer(
-    r'---\s*\ntitle:\s*"([^"]+)"\s*\ndate:\s*(\d{4}-\d{2}-\d{2})\s*\ndescription:\s*"([^"]+)"\s*\ntags:\s*(\[.*?\])',
+    r'---\s*\ntitle:\s*"([^"]+)"\s*\ndate:\s*(\d{4}-\d{2}-\d{2})\s*\ndescription:\s*"([^"]+)"\s*\ntags:\s*(\[.*?\]|(?:\n\s*- .*?)+)',
     text, re.S,
 ))
 real = None
@@ -116,67 +231,35 @@ if len(body.strip()) < 400:
 out.write_text(chunk.rstrip() + '\n')
 logp.write_text(f'validation_ok: body_chars={len(body.strip())}\n')
 PY
-      rc=$?
-      python3 - "$meta_file" "$rc" "$tmp" "$err_file" "$validate_log" "$attempt" <<'PY'
+  rc=$?
+  python3 - "$meta_file" "$rc" "$out_file" "$err_file" "$validate_log" "$response_file" "$status_file" <<'PY'
 import json, sys
 from pathlib import Path
-meta, rc, outp, errp, logp, attempt = sys.argv[1:7]
+meta, rc, outp, errp, logp, resp, statusp = sys.argv[1:8]
 out = Path(outp).read_text() if Path(outp).exists() else ''
 err = Path(errp).read_text() if Path(errp).exists() else ''
 log = Path(logp).read_text() if Path(logp).exists() else ''
+response = Path(resp).read_text() if Path(resp).exists() else ''
+status = {'stage': 'validation_done' if int(rc) == 0 else 'validation_failed'}
+Path(statusp).write_text(json.dumps(status, indent=2) + '\n')
 Path(meta).write_text(json.dumps({
   'stage': 'validation_done' if int(rc) == 0 else 'validation_failed',
-  'attempt': int(attempt),
   'returncode': int(rc),
-  'stdout_chars': len(out),
+  'draft_chars': len(out),
   'stderr_chars': len(err),
-  'stdout_head': out[:2000],
+  'agent_response_chars': len(response),
+  'draft_head': out[:2000],
   'stderr_head': err[:2000],
+  'agent_response_head': response[:2000],
   'validation': log[:2000],
 }, indent=2) + '\n')
 PY
-      if [ "$rc" -eq 0 ]; then
-        LAST_DRAFT_STATUS="success"
-      else
-        LAST_DRAFT_STATUS="validation_failed"
-      fi
-      rm -f "$tmp"
-      return "$rc"
-    fi
-
-    rc=$?
-    cp "$tmp" "$raw_file" 2>/dev/null || true
-    python3 - "$meta_file" "$rc" "$tmp" "$err_file" "$attempt" <<'PY'
-import json, sys
-from pathlib import Path
-meta, rc, outp, errp, attempt = sys.argv[1:6]
-out = Path(outp).read_text() if Path(outp).exists() else ''
-err = Path(errp).read_text() if Path(errp).exists() else ''
-stage = 'command_failed'
-if 'Not logged in · Please run /login' in out:
-    stage = 'login_required'
-Path(meta).write_text(json.dumps({
-  'stage': stage,
-  'attempt': int(attempt),
-  'returncode': int(rc),
-  'stdout_chars': len(out),
-  'stderr_chars': len(err),
-  'stdout_head': out[:2000],
-  'stderr_head': err[:2000],
-}, indent=2) + '\n')
-PY
-    if grep -Fq 'Not logged in · Please run /login' "$tmp" 2>/dev/null; then
-      LAST_DRAFT_STATUS="login_required"
-      echo "claude login state unavailable on attempt ${attempt}/3; retrying"
-      sleep 5
-      continue
-    fi
-    LAST_DRAFT_STATUS="command_failed"
-    rm -f "$tmp"
-    return 1
-  done
-  rm -f "$tmp"
-  return 1
+  if [ "$rc" -eq 0 ]; then
+    LAST_DRAFT_STATUS="success"
+  else
+    LAST_DRAFT_STATUS="validation_failed"
+  fi
+  return "$rc"
 }
 
 exec >>"$LOG_FILE" 2>&1
@@ -255,7 +338,7 @@ Daily Review source:
 EOF
 cat "$SANITIZED_REVIEW" >> "$PROMPT_FILE"
 
-if ! claude_generate_draft "$PROMPT_FILE" "$DRAFT_FILE"; then
+if ! agent_generate_draft "$PROMPT_FILE" "$DRAFT_FILE"; then
   fail_and_notify "Claude Code draft generation failed"
 fi
 
