@@ -153,28 +153,6 @@ PY
     return 1
   fi
 
-  if ! grep -Fq 'DRAFT_WRITTEN' "$response_file" 2>/dev/null; then
-    LAST_DRAFT_STATUS="command_failed"
-    python3 - "$meta_file" "$response_file" "$err_file" "$status_file" <<'PY'
-import json, sys
-from pathlib import Path
-meta, outp, errp, statusp = sys.argv[1:5]
-out = Path(outp).read_text() if Path(outp).exists() else ''
-err = Path(errp).read_text() if Path(errp).exists() else ''
-status = {'stage': 'agent_missing_ack'}
-Path(statusp).write_text(json.dumps(status, indent=2) + '\n')
-Path(meta).write_text(json.dumps({
-  'stage': 'agent_missing_ack',
-  'returncode': 0,
-  'stdout_chars': len(out),
-  'stderr_chars': len(err),
-  'stdout_head': out[:2000],
-  'stderr_head': err[:2000],
-}, indent=2) + '\n')
-PY
-    return 1
-  fi
-
   if [ ! -s "$out_file" ]; then
     LAST_DRAFT_STATUS="command_failed"
     python3 - "$meta_file" "$response_file" "$err_file" "$status_file" <<'PY'
