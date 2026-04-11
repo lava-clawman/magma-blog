@@ -1,0 +1,93 @@
+In the current working directory, read the prompt file at /Users/lab/Flash-Claude/projects/magma-blog/artifacts/2026-03-16/antigravity-prompt.txt.
+
+Your job is NOT to author the article yourself.
+Your job is to invoke Claude Code CLI from inside this agent context so Claude generates the draft.
+
+CRITICAL EXECUTION RULES:
+- Use the exec tool to run Claude Code CLI.
+- Run Claude in non-interactive print mode, not chat mode.
+- Claude must be the component that generates the article text.
+- Save Claude's generated markdown draft directly to /Users/lab/Flash-Claude/projects/magma-blog/artifacts/2026-03-16/antigravity-draft.md.
+- You may use shell redirection and/or a follow-up write step if needed, but the prose itself must come from Claude CLI output, not from you composing it directly.
+- Do NOT ask follow-up questions.
+
+Claude output requirements:
+- Valid YAML frontmatter plus body.
+- Frontmatter must include:
+  - title
+  - date: 2026-03-16
+  - description
+  - tags
+- Use first-person voice.
+- 500-900 words.
+- Remove private identifiers, handles, email addresses, and overly specific personal traces.
+- Focus on durable workflow / judgment / system / engineering lessons.
+- End with an unresolved tension, not a neat conclusion.
+- Do NOT include planning notes, status text, or meta-commentary in the saved file.
+
+Suggested Claude command shape:
+claude --permission-mode bypassPermissions --print "Write a PUBLIC reflection blog post draft from the daily review below.
+
+HARD OUTPUT CONTRACT:
+- Output a SINGLE complete markdown draft and nothing else.
+- Do NOT ask follow-up questions.
+- Do NOT include planning, status, or meta-commentary.
+- Include both frontmatter and body.
+
+Markdown requirements:
+---
+title: "..."
+date: 2026-03-16
+description: "..."
+tags: ["reflection", "..."]
+---
+
+[body]
+
+Content requirements:
+- Use first-person voice.
+- 500-900 words.
+- Remove private identifiers, handles, email addresses, and overly specific personal traces.
+- Focus on durable workflow / judgment / system / engineering lessons.
+- End with an unresolved tension, not a neat conclusion.
+
+Daily Review source:
+# Daily Review 2026-03-16
+
+- Related: [[Second Brain Operating System]], [[Second-Brain-Integration-Plan-v1]], [[Task Management]], [[FlashNotes]]
+
+## 今日关键事项
+- 明确了 [[OpenClaw]] 多 agent 共享记忆的边界：默认设计是按 agent 隔离 workspace、session、auth 与 memory，不存在官方“一键全局共享 MEMORY”的开关。
+- 形成了 3 种共享记忆实现路径，并给出适用场景：
+  - 共用同一 workspace：适合同一人格的多入口。
+  - 独立 workspace + 共享 memory 文件注入：适合多角色协作下的公共背景同步。
+  - 独立 agent + 中心化 memory service / memory agent：适合更强边界与可控性。
+- 输出了面向实践的推荐方案：优先采用“独立 workspace + shared-memory 注入”，兼顾隔离性与共享上下文能力。
+
+## 决策与变更
+- 决策：将“共享记忆”定义为**共享文件/共享知识层**，而不是共享 session 历史；各 agent 对话历史仍保持独立。
+- 决策：不建议复用同一个 `agentDir` 来共享认证；如需共享认证，单独复制 `auth-profiles.json`，避免会话与凭证冲突。
+- 决策：若只是不同渠道入口但本质是同一个助手，可直接让多个 agent 指向同一 `workspace`；若目标是多角色协作，则避免直接共写同一套人格与记忆文件。
+- 认知澄清：sub-agent 不是完整继承主 agent 全量人格/记忆，只会拿到有限 bootstrap 上下文，不能视为天然“共享大脑”。
+
+## 错误与改进
+- 修正了一个常见误区：**共享 `[[MEMORY]]` 不等于共享整段对话历史**；session 仍按 `agent` 分离存储。
+- 修正了另一个风险点：**不要通过共用 `agentDir` 来实现“共享”**，这会带来 auth 与 session 污染风险。
+- 形成更稳妥的设计建议：若需要公共知识，应优先共享受控的记忆层或知识源，而不是让多个 agent 同时自由读写同一整套工作区。
+
+## 未完成事项（待提醒）
+- 还未落地最终方案：需要在“共用 workspace”与“独立 workspace + shared-memory 注入”之间做最终取舍。
+- 如采用推荐方案，后续还需要补齐：
+  - `shared-memory` 目录结构
+  - bootstrap / hook 注入配置
+  - 各 agent 的 workspace 边界定义
+- 需要准备两套可直接落地的配置草案：
+  - 最省事版：多 agent 共用同一 workspace
+  - 推荐版：独立 workspace + shared-memory 注入
+
+## 明日优先级 Top 3
+1. 确认 [[OpenClaw]] 多 agent 记忆架构的最终路线：统一 workspace 还是 shared-memory 注入。
+2. 产出可直接使用的配置示例与目录结构，沉淀到 [[FlashNotes]]。
+3. 明确哪些知识应进入共享记忆层，哪些必须保留在 agent 私有 workspace 内。"
+
+After Claude-generated content has been successfully saved to /Users/lab/Flash-Claude/projects/magma-blog/artifacts/2026-03-16/antigravity-draft.md, reply with exactly: DRAFT_WRITTEN
