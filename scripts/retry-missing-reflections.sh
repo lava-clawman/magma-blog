@@ -44,17 +44,9 @@ run_publish_stage() {
 }
 
 pick_target_date() {
-  local hour date
-  hour="$(date +%H)"
+  local date
 
-  if [ "$hour" -ge 7 ]; then
-    date="$(date -v-1d +%F)"
-    if run_publish_stage "$date"; then
-      return 0
-    fi
-  fi
-
-  for offset in 2 3; do
+  for offset in 1 2 3; do
     date="$(date -v-${offset}d +%F)"
     if run_publish_stage "$date"; then
       return 0
