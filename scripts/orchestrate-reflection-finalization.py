@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -9,6 +10,7 @@ OPENCLAW_BIN = Path('/Users/lab/.local/bin/openclaw')
 CHANNEL_TARGET = 'channel:1484517576985022545'
 LOCK_DIR = ROOT / '.locks'
 LOCK_DIR.mkdir(exist_ok=True)
+SELF_MARKER = 'orchestrate-reflection-finalization.py'
 
 
 def run(cmd, **kwargs):
@@ -26,6 +28,53 @@ def notify(text: str) -> None:
 
 def write_state(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2) + '\n')
+
+
+def pid_alive(pid: int | None) -> bool:
+    if not pid or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def command_matches(pid: int | None, marker: str | None) -> bool:
+    if not pid_alive(pid) or not marker:
+        return False
+    try:
+        proc = subprocess.run(
+            ['ps', '-p', str(pid), '-o', 'command='],
+            text=True,
+            capture_output=True,
+            timeout=5,
+        )
+    except Exception:
+        return False
+    return marker in (proc.stdout or '')
+
+
+def acquire_lock(lock_file: Path) -> bool:
+    if lock_file.exists():
+        stale_pid = None
+        stale_marker = None
+        try:
+            parts = lock_file.read_text().splitlines()
+            if parts:
+                stale_pid = int(parts[0].strip())
+            if len(parts) > 1:
+                stale_marker = parts[1].strip()
+        except Exception:
+            stale_pid = None
+            stale_marker = None
+        if command_matches(stale_pid, stale_marker):
+            print(f'orchestrator lock exists: {lock_file} pid={stale_pid} marker={stale_marker}')
+            return False
+        print(f'removing stale orchestrator lock: {lock_file} pid={stale_pid} marker={stale_marker}')
+        lock_file.unlink(missing_ok=True)
+    lock_file.write_text(f'{os.getpid()}\n{SELF_MARKER}\n')
+    return True
 
 
 def main() -> int:
@@ -47,10 +96,8 @@ def main() -> int:
     final_state = artifact_dir / 'final-ready.json'
     lock_file = LOCK_DIR / f'orchestrate-{date}.lock'
 
-    if lock_file.exists():
-        print(f'orchestrator lock exists: {lock_file}')
+    if not acquire_lock(lock_file):
         return 0
-    lock_file.write_text('running\n')
     try:
         if publish_state.exists() or success_flag.exists() or blog_file.exists() and final_file.exists():
             print(f'publish already complete for {date}')
@@ -118,7 +165,6 @@ def main() -> int:
             review_file,
             artifact_dir / 'source-review.md',
             final_state,
-            # legacy Antigravity read artifacts (absent on Claude Code draft runs)
             artifact_dir / 'antigravity-read.json',
             artifact_dir / 'antigravity-hints.txt',
         ]

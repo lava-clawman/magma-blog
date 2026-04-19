@@ -8,6 +8,7 @@ REVIEWS_DIR="$HOME/Flash-Claude/FlashNotes/reviews"
 LOG_DIR="$REPO/logs"
 LOCK_DIR="$REPO/.locks"
 OPENCLAW_BIN="/Users/lab/.local/bin/openclaw"
+ORCH_SCRIPT="$REPO/scripts/orchestrate-reflection-finalization.py"
 mkdir -p "$LOG_DIR" "$LOCK_DIR"
 
 DATE="${1:-$(date -v-1d +%F)}"
@@ -20,8 +21,54 @@ FAIL_FLAG="$ARTIFACT_DIR/.failure-notified"
 DRAFT_READY_FLAG="$ARTIFACT_DIR/draft-ready.json"
 CHANNEL_TARGET="channel:1484517576985022545"
 DRAFT_FILE="$ARTIFACT_DIR/antigravity-draft.md"
+FINAL_FILE="$ARTIFACT_DIR/final-reflection.md"
+PUBLISH_DONE_FLAG="$ARTIFACT_DIR/publish-complete.json"
 LAST_DRAFT_STATUS="unknown"
 DRAFT_AGENT_SESSION="draft-${DATE}"
+SELF_MARKER="publish-from-review.sh"
+
+read_lock_pid() {
+  local lock_file="$1"
+  head -n 1 "$lock_file" 2>/dev/null | tr -dc '0-9'
+}
+
+read_lock_marker() {
+  local lock_file="$1"
+  sed -n '2p' "$lock_file" 2>/dev/null
+}
+
+lock_matches_owner() {
+  local pid="$1"
+  local marker="$2"
+  [ -n "$pid" ] || return 1
+  [ -n "$marker" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  ps -p "$pid" -o command= 2>/dev/null | grep -F "$marker" >/dev/null
+}
+
+acquire_lock() {
+  local lock_file="$1"
+  local marker="$2"
+  local pid=''
+  local old_marker=''
+
+  if [ -e "$lock_file" ]; then
+    pid="$(read_lock_pid "$lock_file")"
+    old_marker="$(read_lock_marker "$lock_file")"
+    if lock_matches_owner "$pid" "$old_marker"; then
+      echo "active lock exists: $lock_file (pid=$pid marker=$old_marker)"
+      return 1
+    fi
+    echo "removing stale lock: $lock_file${pid:+ (pid=$pid marker=${old_marker:-unknown})}"
+    rm -f "$lock_file"
+  fi
+
+  {
+    printf '%s\n' "$$"
+    printf '%s\n' "$marker"
+  } > "$lock_file"
+  return 0
+}
 
 notify() {
   local text="$1"
@@ -130,6 +177,11 @@ EOF
 
   cp "$response_file" "$result_file" 2>/dev/null || true
   cp "$out_file" "$raw_file" 2>/dev/null || true
+
+  if grep -qi 'Not logged in .*Please run /login' "$err_file" 2>/dev/null; then
+    LAST_DRAFT_STATUS="login_required"
+    return 1
+  fi
 
   if [ "$rc" -ne 0 ]; then
     LAST_DRAFT_STATUS="command_failed"
@@ -244,12 +296,10 @@ exec >>"$LOG_FILE" 2>&1
 
 echo "[$(date '+%F %T')] START date=$DATE"
 
-if [ -e "$LOCK_FILE" ]; then
-  echo "lock exists: $LOCK_FILE"
+if ! acquire_lock "$LOCK_FILE" "$SELF_MARKER"; then
   exit 0
 fi
-trap 'rm -f "$LOCK_FILE"' EXIT
-: > "$LOCK_FILE"
+trap 'rm -f "$LOCK_FILE"' EXIT INT TERM HUP
 
 if [ ! -f "$REVIEW_FILE" ]; then
   echo "review missing: $REVIEW_FILE"
@@ -258,20 +308,33 @@ fi
 
 cd "$REPO"
 
+if [ -f "$PUBLISH_DONE_FLAG" ] || [ -f "$BLOG_FILE" ]; then
+  echo "publish already complete for $DATE, skipping"
+  exit 0
+fi
+
+mkdir -p "$ARTIFACT_DIR"
+
+if [ -f "$DRAFT_READY_FLAG" ] && [ -s "$DRAFT_FILE" ]; then
+  echo "existing draft-ready state found for $DATE; preserving and invoking orchestrator"
+  /usr/bin/python3 "$ORCH_SCRIPT" "$DATE"
+  exit $?
+fi
+
+if [ -s "$FINAL_FILE" ]; then
+  echo "existing final draft found for $DATE; invoking orchestrator"
+  /usr/bin/python3 "$ORCH_SCRIPT" "$DATE"
+  exit $?
+fi
+
 if git ls-files --error-unmatch "$BLOG_FILE" >/dev/null 2>&1; then
   echo "blog already tracked for $DATE, skipping"
   exit 0
 fi
 
-if [ -d "$ARTIFACT_DIR" ] && ! git ls-files --error-unmatch "$ARTIFACT_DIR" >/dev/null 2>&1; then
-  echo "cleaning untracked artifact residue before git sync: $ARTIFACT_DIR"
-  rm -rf "$ARTIFACT_DIR"
-fi
-
 echo "git sync preflight"
 git pull --rebase origin main || fail_and_notify "git pull --rebase preflight failed"
 
-mkdir -p "$ARTIFACT_DIR"
 SANITIZED_REVIEW="$ARTIFACT_DIR/source-review.sanitized.md"
 cp "$REVIEW_FILE" "$ARTIFACT_DIR/source-review.md"
 python3 - "$REVIEW_FILE" "$SANITIZED_REVIEW" <<'PY'
@@ -284,7 +347,7 @@ Path(sys.argv[2]).write_text(src)
 PY
 
 PROMPT_FILE="$ARTIFACT_DIR/antigravity-prompt.txt"
-rm -f "$DRAFT_FILE" "$DRAFT_READY_FLAG"
+rm -f "$DRAFT_FILE"
 
 cat > "$PROMPT_FILE" <<EOF
 Write a PUBLIC reflection blog post draft from the daily review below.
@@ -332,6 +395,7 @@ Path(out).write_text(json.dumps({
 }, indent=2) + '\n')
 PY
 
-notify "magma-blog 草稿已生成（${DATE}）\n- Draft: artifacts/${DATE}/antigravity-draft.md\n- 已写入 draft-ready.json，等待 agent 编排层接手终稿与发布。"
+notify "magma-blog 草稿已生成（${DATE}）\n- Draft: artifacts/${DATE}/antigravity-draft.md\n- 已写入 draft-ready.json，继续进入终稿与发布编排。"
 
-echo "draft stage complete; stopping for agent orchestration layer"
+echo "draft stage complete; invoking orchestration layer"
+/usr/bin/python3 "$ORCH_SCRIPT" "$DATE"
