@@ -4,6 +4,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 ROOT = Path('/Users/lab/Flash-Claude/projects/magma-blog')
 OPENCLAW_BIN = Path('/Users/lab/.local/bin/openclaw')
@@ -30,7 +31,7 @@ def write_state(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2) + '\n')
 
 
-def pid_alive(pid: int | None) -> bool:
+def pid_alive(pid: Optional[int]) -> bool:
     if not pid or pid <= 0:
         return False
     try:
@@ -40,7 +41,7 @@ def pid_alive(pid: int | None) -> bool:
     return True
 
 
-def command_matches(pid: int | None, marker: str | None) -> bool:
+def command_matches(pid: Optional[int], marker: Optional[str]) -> bool:
     if not pid_alive(pid) or not marker:
         return False
     try:

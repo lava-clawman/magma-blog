@@ -79,6 +79,7 @@ Installed schedule:
 
 ```bash
 35 3 * * * PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin HOME=/Users/lab /Users/lab/Flash-Claude/projects/magma-blog/scripts/publish-from-review.sh >/tmp/magma-blog-cron.log 2>&1
+35 4-23,0-2 * * * PATH=/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin HOME=/Users/lab /Users/lab/Flash-Claude/projects/magma-blog/scripts/retry-missing-reflections.sh >/tmp/magma-blog-retry.log 2>&1
 ```
 
 Behavior:
