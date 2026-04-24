@@ -23,6 +23,7 @@ CHANNEL_TARGET="channel:1484517576985022545"
 DRAFT_FILE="$ARTIFACT_DIR/antigravity-draft.md"
 FINAL_FILE="$ARTIFACT_DIR/final-reflection.md"
 PUBLISH_DONE_FLAG="$ARTIFACT_DIR/publish-complete.json"
+LOGIN_REQUIRED_FLAG="$ARTIFACT_DIR/claude-login-required.json"
 LAST_DRAFT_STATUS="unknown"
 DRAFT_AGENT_SESSION="draft-${DATE}"
 SELF_MARKER="publish-from-review.sh"
@@ -87,6 +88,36 @@ try:
 except subprocess.TimeoutExpired:
     raise SystemExit(124)
 PY
+}
+
+write_login_required_state() {
+  local detail="${1:-Claude CLI auth status failed}"
+  python3 - "$LOGIN_REQUIRED_FLAG" "$DATE" "$detail" <<'PY'
+import json, sys
+from pathlib import Path
+path, date, detail = sys.argv[1:4]
+Path(path).write_text(json.dumps({
+    'date': date,
+    'stage': 'login_required',
+    'detail': detail,
+}, indent=2) + '\n')
+PY
+}
+
+claude_auth_ready() {
+  local auth_file="$ARTIFACT_DIR/claude-auth-status.txt"
+  local rc=0
+  set +e
+  claude auth status --text > "$auth_file" 2>&1
+  rc=$?
+  set -e
+  if [ "$rc" -eq 0 ]; then
+    rm -f "$LOGIN_REQUIRED_FLAG"
+    return 0
+  fi
+  LAST_DRAFT_STATUS="login_required"
+  write_login_required_state "$(head -n 20 "$auth_file" 2>/dev/null | tr '\n' ' ' | sed 's/  */ /g' | sed 's/^ *//; s/ *$//')"
+  return 1
 }
 
 fail_and_notify() {
@@ -349,6 +380,10 @@ PY
 PROMPT_FILE="$ARTIFACT_DIR/antigravity-prompt.txt"
 rm -f "$DRAFT_FILE"
 
+if ! claude_auth_ready; then
+  fail_and_notify "Claude Code auth preflight failed"
+fi
+
 cat > "$PROMPT_FILE" <<EOF
 Write a PUBLIC reflection blog post draft from the daily review below.
 
@@ -382,6 +417,8 @@ cat "$SANITIZED_REVIEW" >> "$PROMPT_FILE"
 if ! agent_generate_draft "$PROMPT_FILE" "$DRAFT_FILE"; then
   fail_and_notify "Claude Code draft generation failed"
 fi
+
+rm -f "$LOGIN_REQUIRED_FLAG"
 
 python3 - "$DATE" "$DRAFT_FILE" "$SANITIZED_REVIEW" "$DRAFT_READY_FLAG" <<'PY'
 import json, sys

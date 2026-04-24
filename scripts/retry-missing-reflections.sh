@@ -73,6 +73,7 @@ run_publish_stage() {
   local final_file="$artifact_dir/final-reflection.md"
   local success_flag="$artifact_dir/.success-notified"
   local publish_done="$artifact_dir/publish-complete.json"
+  local login_required_flag="$artifact_dir/claude-login-required.json"
   local stage_lock="$LOCK_DIR/retry-${date}.lock"
   local publish_lock="$LOCK_DIR/publish-${date}.lock"
   local orchestrate_lock="$LOCK_DIR/orchestrate-${date}.lock"
@@ -83,6 +84,21 @@ run_publish_stage() {
 
   if [ -f "$success_flag" ] || [ -f "$publish_done" ] || [ -f "$blog_file" ]; then
     return 1
+  fi
+
+  if [ -f "$login_required_flag" ]; then
+    local auth_file="$artifact_dir/claude-auth-status.txt"
+    local auth_rc=0
+    set +e
+    claude auth status --text > "$auth_file" 2>&1
+    auth_rc=$?
+    set -e
+    if [ "$auth_rc" -ne 0 ]; then
+      echo "login required for $date, skipping blind retry until Claude auth is restored"
+      return 1
+    fi
+    echo "Claude auth restored for $date; clearing login-required marker"
+    rm -f "$login_required_flag"
   fi
 
   if [ -e "$publish_lock" ]; then
