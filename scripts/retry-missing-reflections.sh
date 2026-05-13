@@ -3,6 +3,29 @@ set -euo pipefail
 
 PATH=/Users/lab/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 HOME=/Users/lab
+
+running_under_cron() {
+  local pid="$$"
+  local parent=''
+  local comm=''
+  while [ -n "$pid" ] && [ "$pid" != "1" ]; do
+    parent="$(ps -p "$pid" -o ppid= 2>/dev/null | tr -d ' ')"
+    comm="$(ps -p "$pid" -o comm= 2>/dev/null || true)"
+    case "$comm" in
+      */cron|cron|*/crond|crond)
+        return 0
+        ;;
+    esac
+    pid="$parent"
+  done
+  return 1
+}
+
+if [ "${MAGMA_BLOG_ALLOW_CRON:-}" != "1" ] && running_under_cron; then
+  echo "magma-blog scheduler migrated from cron to LaunchAgent; cron invocation skipped"
+  exit 0
+fi
+
 REPO="$HOME/Flash-Claude/projects/magma-blog"
 REVIEWS_DIR="$HOME/Flash-Claude/FlashNotes/reviews"
 ORCH="$REPO/scripts/orchestrate-reflection-finalization.py"
