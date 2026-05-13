@@ -22,6 +22,14 @@ pnpm-debug.log*
 logs/
 .locks/
 
+# Runtime publish markers / failed draft diagnostics
+artifacts/*/.success-notified
+artifacts/*/.failure-notified
+artifacts/*/publish-complete.json
+artifacts/*/claude-auth-status.txt
+artifacts/*/claude-login-required.json
+artifacts/*/claude-draft.*
+
 # Editor
 .vscode/
 .idea/
