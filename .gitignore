@@ -29,6 +29,12 @@ artifacts/*/publish-complete.json
 artifacts/*/claude-auth-status.txt
 artifacts/*/claude-login-required.json
 artifacts/*/claude-draft.*
+artifacts/*/antigravity-prompt.txt
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
 
 # Editor
 .vscode/
