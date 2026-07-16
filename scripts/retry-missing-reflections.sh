@@ -116,7 +116,9 @@ run_publish_stage() {
     claude auth status --text > "$auth_file" 2>&1
     auth_rc=$?
     set -e
-    if [ "$auth_rc" -ne 0 ]; then
+    # Claude CLI may exit 0 for an expired login, so require the explicit
+    # authenticated status line before clearing the circuit-breaker marker.
+    if [ "$auth_rc" -ne 0 ] || ! grep -Eiq '^Login method:' "$auth_file"; then
       echo "login required for $date, skipping blind retry until Claude auth is restored"
       return 1
     fi

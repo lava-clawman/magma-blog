@@ -134,7 +134,10 @@ claude_auth_ready() {
   claude auth status --text > "$auth_file" 2>&1
   rc=$?
   set -e
-  if [ "$rc" -eq 0 ]; then
+  # Claude CLI can return exit code 0 even when the saved login is expired.
+  # Treat the human-readable status as authoritative and require the known
+  # authenticated form rather than trusting the process exit code alone.
+  if [ "$rc" -eq 0 ] && grep -Eiq '^Login method:' "$auth_file"; then
     rm -f "$LOGIN_REQUIRED_FLAG"
     return 0
   fi
@@ -151,10 +154,10 @@ fail_and_notify() {
     local extra="- 尚未进入终稿与发布阶段。"
     case "$LAST_DRAFT_STATUS" in
       login_required)
-        extra="- 真实原因：Claude CLI 返回未登录状态（Not logged in · Please run /login），短重试后仍未恢复。\n- 尚未进入终稿与发布阶段。"
+        extra="- 真实原因：Claude CLI 登录已失效，需要重新登录。\n- 自动恢复：每小时检查一次认证状态；认证恢复前暂停草稿重试，恢复后自动继续。\n- 尚未进入终稿与发布阶段。"
         ;;
       command_failed)
-        extra="- 真实原因：Claude CLI 命令执行失败。\n- 尚未进入终稿与发布阶段。"
+        extra="- 真实原因：Claude CLI 命令执行失败。\n- 自动恢复：后续每小时重试一次。\n- 尚未进入终稿与发布阶段。"
         ;;
       validation_failed)
         extra="- 真实原因：Claude 已返回输出，但草稿校验未通过。\n- 尚未进入终稿与发布阶段。"
