@@ -100,7 +100,10 @@ def main() -> int:
     if not acquire_lock(lock_file):
         return 0
     try:
-        if publish_state.exists() or success_flag.exists() or blog_file.exists() and final_file.exists():
+        # blog_file is staged before npm install/build/git push, so it is not a
+        # completion signal. Retry until one of the durable publish markers is
+        # present.
+        if publish_state.exists() or success_flag.exists():
             print(f'publish already complete for {date}')
             return 0
         if not ready_file.exists():

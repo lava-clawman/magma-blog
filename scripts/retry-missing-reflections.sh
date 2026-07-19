@@ -105,7 +105,10 @@ run_publish_stage() {
     return 1
   fi
 
-  if [ -f "$success_flag" ] || [ -f "$publish_done" ] || [ -f "$blog_file" ]; then
+  # The blog file is written before dependency install/build/git push. Its
+  # presence only means the publish attempt reached the staging step, not that
+  # publication completed. Only durable completion markers stop retries.
+  if [ -f "$success_flag" ] || [ -f "$publish_done" ]; then
     return 1
   fi
 

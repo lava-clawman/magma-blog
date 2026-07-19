@@ -4,6 +4,11 @@ import subprocess
 
 PUBLISH_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "publish-from-review.sh"
 RETRY_SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "retry-missing-reflections.sh"
+ORCHESTRATOR = (
+    Path(__file__).resolve().parents[1]
+    / "scripts"
+    / "orchestrate-reflection-finalization.py"
+)
 
 
 def test_publish_script_checks_claude_auth_before_draft_generation():
@@ -21,6 +26,14 @@ def test_retry_script_skips_blind_retries_when_login_is_required():
     assert "claude-login-required.json" in script
     assert "grep -Eiq '^Login method:'" in script
     assert "login required for" in script
+
+
+def test_retry_does_not_treat_a_staged_blog_file_as_publish_success():
+    retry_script = RETRY_SCRIPT.read_text()
+    orchestrator = ORCHESTRATOR.read_text()
+
+    assert '|| [ -f "$blog_file" ]' not in retry_script
+    assert "blog_file.exists() and final_file.exists()" not in orchestrator
 
 
 def test_auth_detection_rejects_expired_status_even_with_zero_exit_code(tmp_path):
