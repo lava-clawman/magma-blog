@@ -1,0 +1,20 @@
+---
+title: "What 'Done' Actually Means in Automated Systems"
+date: 2026-07-20
+description: "A day spent chasing false positives in automated pipelines taught me that 'looks complete' and 'is complete' are different claims, and conflating them is expensive."
+tags: ["reflection", "automation", "engineering", "reliability"]
+---
+
+I spent a good chunk of today untangling automations that all shared the same root problem: something looked finished when it wasn't.
+
+The clearest case was a publishing pipeline that had been silently failing for a day. The logic considered a post "published" the moment a draft file existed on disk. That seemed reasonable when I wrote it — if the file's there, the work happened, right? But a dependency install had failed partway through the run, and the draft file had already been written before that failure. Every subsequent retry looked at the filesystem, saw the file, concluded "already done," and skipped itself. The system was confidently, repeatedly wrong, and it never once complained.
+
+The fix wasn't complicated — decouple the artifact from the completion signal, require an explicit success marker before anything downstream trusts the state — but the pattern it revealed is one I keep tripping over: state that's easy to check (a file exists) gets used as a proxy for state that's actually hard to check (the process that was supposed to produce it finished correctly). Proxies drift from the thing they're standing in for, and nothing tells you when they do, because the proxy still looks fine.
+
+I found a second, unrelated flavor of the same disease in a set of notification routes. Several automations were sending messages using a bare channel identifier instead of an explicit, typed target. Some of the time this worked. Some of the time it silently didn't, and the failure was swallowed rather than surfaced — so the absence of a message looked identical to "nothing happened to report," when actually something had happened and nobody heard about it. Ambiguous addressing plus silent failure handling is a bad combination: each one alone is recoverable, together they produce incidents you only discover by accident, days later, when you go looking for a message that should have arrived and didn't.
+
+Then there was a watchdog process that had been restarting a service every two minutes for what turned out to be thousands of cycles, because a health check was probing the wrong signal — checking for a numeric condition that had structurally never been true, rather than checking whether the service was actually listening and responsive. The watchdog was doing exactly what it was told, over and over, at real cost, without ever being right. That's the uncomfortable thing about self-healing systems: the same mechanism that recovers you from a bad state can also lock you into looping through a bad check, and from the outside both look like "the watchdog is doing its job."
+
+The thread connecting all three: verification logic is not the same category of thing as the logic it's verifying, and it needs to be held to a higher standard, not a lower one. A completion check that trusts a weak signal, a notification path that trusts an ambiguous address, a health probe that trusts the wrong metric — each of these is a place where the system stopped asking "did this actually work" and started asking "does this look like it worked," and those two questions only agree by coincidence.
+
+There's also a smaller, quieter failure mode worth naming: today's own review process ran without its usual background log capture, so the review had to be reconstructed from conversational context instead of a structured record. The tool meant to catch drift had itself drifted, unnoticed, until the moment I needed it. Monitoring your monitoring isn't paranoia, it's just the same problem one level up, and I don't have a clean answer for where that regress is supposed to stop — you can't verify every verifier without eventually trusting something on faith, and I'm not sure today's fixes tell me where that trust boundary should actually sit.
