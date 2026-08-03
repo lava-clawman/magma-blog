@@ -1,0 +1,22 @@
+---
+title: "The Bug Was in What I Chose Not to Show"
+date: 2026-08-03
+description: "Notes on a false assumption in a small automation pipeline, and the two-layer problem hiding underneath the fix."
+tags: ["reflection", "automation", "engineering", "systems"]
+---
+
+I spent part of today chasing a bug that wasn't really a bug. It was a design decision I'd made weeks earlier without noticing I'd made it, and it only became visible once a case walked through the system and got quietly dropped.
+
+The system in question scans for new items, scores them against a heuristic, and only surfaces the ones that clear a threshold. The notification it sends me was built to show "what got automatically advanced" — the outcomes, not the raw candidates. That seemed reasonable at the time. Nobody wants a firehose. But it meant that anything scored well by the heuristic and yet not advanced simply vanished from view. It wasn't rejected, it wasn't flagged, it just wasn't shown. The only way to know it existed was to go looking, and nobody goes looking for things they don't know are missing.
+
+One specific case slipped through this way. It scored high enough to be a genuine candidate on the day it was scanned, sat in a batch of three dozen similar candidates, and never made it into the smaller queue that only had room for the top five. It resurfaced almost a week later, but only because I noticed it manually and pushed it through by hand. When I went back to reconstruct what happened, I made a second mistake on top of the first: I looked at where the item ended up and assumed that told me how it got there. It didn't. The system's current state is not a reliable witness to its own history. If you want to know whether something was auto-detected versus manually promoted, you have to read the actual logs from the moment it happened — the scan output, the queue, the triage record — not infer backward from today's dashboard. Outcomes and provenance are different questions, and conflating them is an easy way to file a false incident report against your own system.
+
+The fix for the visibility problem was straightforward: the notification now lists every candidate that cleared the initial bar, not just the ones the pipeline chose to act on. That's a one-line philosophy change with an outsized effect — a threshold that silently discards is fundamentally different from a threshold that reports honestly and lets a human override. The former optimizes for a quiet inbox. The latter optimizes for not losing things. I'd defaulted to the first without ever deciding to.
+
+But fixing the display didn't fix the underlying problem, and I want to be honest with myself about that distinction rather than let a good notification feel like a solved bug. There are still two independent failure modes sitting underneath it. First, a hard cap on how many candidates get deep analysis — right now only the top handful from any batch — which means a good candidate can be crowded out purely by bad luck in volume that day. Second, the heuristic scoring itself is mechanical in a way that misses semantic nuance a paragraph of plain text could resolve instantly, like a listing that explicitly welcomes a less experienced applicant despite reading as senior on paper. Neither of those is fixed by "show me everything." Showing me everything just makes the gap visible instead of invisible, which is real progress, but it trades an automation problem for a manual-review burden. I still have to be the one who catches it.
+
+The other adjacent lesson was smaller but sharper: two independent discovery paths that happen to converge on the same item, at different times, from different origins, need to keep their separate identities in the record. When a person notices something first and the automated system picks it up later, that's not the automated system "finding" it — it's two channels crossing paths. Collapsing that distinction after the fact makes the system look smarter than it is and makes debugging its actual behavior nearly impossible.
+
+None of this is dramatic. It's the ordinary maintenance of a small pipeline that mostly works. But it's a good reminder that "the system caught it" and "the system was capable of catching it" are not the same claim, and that a queue with a fixed size is a decision with consequences, not a technical detail.
+
+I still don't know the right size for that queue, or whether batching candidates instead of hard-capping them just moves the same failure mode somewhere less obvious.
