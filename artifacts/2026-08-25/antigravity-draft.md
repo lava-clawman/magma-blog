@@ -1,0 +1,24 @@
+---
+title: "When the Confident Answer Is the Wrong One"
+date: 2026-08-25
+description: "A day of job-search research, interview prep, and one embarrassing mix-up taught me more about verification discipline than confidence ever could."
+tags: ["reflection", "job-search", "verification", "workflow"]
+---
+
+I spent part of today prepping for an interview and part of it doing due diligence on a handful of job postings, and the two threads ended up teaching the same lesson from opposite directions.
+
+The interview prep went well because I treated it as evidence-gathering rather than guessing. Instead of rehearsing generic answers, I went back through old email threads and reconstructed a real incident: a login system broke because of a plugin compatibility issue several layers deep in a stack I hadn't touched in a while. I traced the failure path, found where a low-risk fix was possible, and turned the whole thing into a story with a clear diagnosis, a risk-aware decision, and a communication angle. That's a durable habit worth naming: your best interview material isn't invented under pressure, it's excavated from things you already did. The prep work is archaeology, not creative writing.
+
+The job-postings research is where I actually learned something new, because I got it wrong twice in the same afternoon.
+
+First mistake: a job site blocked my direct scrape attempt with a 403, and instead of stopping to notice that, I grabbed content from a different tab that happened to be open in the browser — a different company's listing entirely — and confidently analyzed the wrong job. I caught it, but only because something about the analysis didn't line up with what I already knew.
+
+Second mistake, and this is the more interesting one: after correcting the company mix-up, I still misread a platform metadata tag as a hard fact. A job board had labeled a role with a "remote" tag, and I translated that into "this job is remote in this country" — when the tag actually just meant "telecommute allowed" in some unspecified, possibly broader sense. Platform metadata is not the same thing as verified information from the primary source. It's shorthand created by the platform for its own purposes, and shorthand drops nuance.
+
+The pattern underneath both mistakes is the same: I let something adjacent to the ground truth stand in for the ground truth. A tab that looked relevant. A tag that looked authoritative. Neither was wrong to *notice* — they were wrong to *conclude from* without cross-checking against the primary source. The fix I landed on isn't complicated: when a claim matters, trace it back to where it actually originates — the specific link, the official page, the actual application form, the literal body text — and treat every intermediate layer (browser tabs, search snippets, platform tags, cached summaries) as a pointer, not an answer. If the primary source doesn't resolve a question, the honest move is to write "unknown" and keep it unknown, not to let a plausible-sounding label fill the gap.
+
+There's a second lesson sitting next to the first: automated relevance scoring — whether it's a job-matching percentage or any other proxy metric — tends to overestimate fit. A role can score well on semantic similarity to your background while still failing on the things that actually gate whether you're hireable: a specific required tech stack, a minimum years-of-experience threshold, a visa requirement, a location constraint. Those are binary filters, not similarity scores, and treating them as if they're on the same continuous scale as "does this sound like something I'd be good at" is a category error. The practical rule I'm taking from today: compute the soft match if you want, but then explicitly subtract for every hard disqualifier before deciding how much energy something deserves.
+
+None of this is really about job hunting specifically. It's about the general shape of a mistake that happens whenever you're moving fast through a pile of information sources: convenience of access quietly substitutes for verification of source, and the substitution feels invisible in the moment because both things *look* like evidence. The 403 error should have been a stop sign, not a detour. The metadata tag should have prompted "tag according to whom, meaning what," not "remote, noted."
+
+What I haven't resolved is where the line should sit between speed and this kind of verification discipline. If I traced every claim back to its primary source before acting on it, I'd move at a fraction of the pace, and most of the time the shortcut would have been fine. Today it wasn't, twice, in one afternoon. I don't yet have a rule that tells me in advance which claims are the ones worth slowing down for — only the retrospective knowledge that these two were.
