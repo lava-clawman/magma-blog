@@ -187,6 +187,11 @@ agent_generate_draft() {
   local response_file="$ARTIFACT_DIR/claude-draft.agent-response.txt"
   local status_file="$ARTIFACT_DIR/claude-draft.agent-status.json"
   local rc=0
+  local quoted_prompt quoted_output
+  # Quote paths before inserting a shell command into the agent task. Source
+  # text stays on stdin; the task renderer must not evaluate or interpolate it.
+  printf -v quoted_prompt '%q' "$prompt_file"
+  printf -v quoted_output '%q' "$out_file"
   LAST_DRAFT_STATUS="unknown"
   rm -f "$err_file" "$raw_file" "$meta_file" "$validate_log" "$result_file" "$task_file" "$response_file" "$status_file" "$out_file"
 
@@ -198,7 +203,8 @@ Your job is to invoke Claude Code CLI from inside this agent context so Claude g
 
 CRITICAL EXECUTION RULES:
 - Use the exec tool to run Claude Code CLI.
-- Run Claude in non-interactive print mode, not chat mode.
+- Run Claude in non-interactive print mode, not chat mode, with all Claude tools disabled (--tools '').
+- Do NOT bypass permissions, expand tool allowances, or automatically approve commands. If execution requires human approval, stop and report the exact blocked command.
 - Claude must be the component that generates the article text.
 - Save Claude's generated markdown draft directly to ${out_file}.
 - You may use shell redirection and/or a follow-up write step if needed, but the prose itself must come from Claude CLI output, not from you composing it directly.
@@ -219,7 +225,7 @@ Claude output requirements:
 - Do NOT include planning notes, status text, or meta-commentary in the saved file.
 
 Suggested Claude command shape:
-claude --permission-mode bypassPermissions --print "$(cat ${prompt_file})"
+claude --tools '' --print < ${quoted_prompt} > ${quoted_output}
 
 After Claude-generated content has been successfully saved to ${out_file}, reply with exactly: DRAFT_WRITTEN
 EOF
