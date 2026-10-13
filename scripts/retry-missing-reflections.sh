@@ -3,6 +3,8 @@ set -euo pipefail
 
 PATH=/Users/lab/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin
 HOME=/Users/lab
+# Keep Git and Python subprocesses on CLT without changing global xcode-select.
+export DEVELOPER_DIR=/Library/Developer/CommandLineTools
 
 running_under_cron() {
   local pid="$$"
